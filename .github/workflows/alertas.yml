@@ -29,10 +29,11 @@ jobs:
           key: estado-${{ github.run_id }}
           restore-keys: estado-
 
-      - name: Configuração da nuvem (sem Facebook, exploração curta)
+      - name: Configuração da nuvem (exploração curta)
         run: |
-          sed -e 's/^fontes = .*/fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox"]/' \
+          sed -e 's/^fontes = .*/fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]/' \
               -e 's/^paginas_exploracao = .*/paginas_exploracao = 2/' \
+              -e "s/^alertar_todos = .*/alertar_todos = ${{ vars.ALERTAR_TODOS || 'false' }}/" \
               config.exemplo.toml > config.toml
 
       - name: Procurar negócios e enviar alertas

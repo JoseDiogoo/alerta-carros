@@ -459,6 +459,18 @@ def euros(valor):
     return f"{int(valor):,} €".replace(",", " ")
 
 
+ENVIADOS_TODOS = [0]
+
+
+def mensagem_simples(anuncio):
+    """Alerta de qualquer anúncio novo (opção alertar_todos), sem análise de negócio."""
+    facts = [euros(anuncio["preco"]), str(anuncio["ano"] or ""),
+             f"{anuncio['km']:,} km".replace(",", " ") if anuncio["km"] else "",
+             anuncio["combustivel"] or "", (anuncio["local"] or "").split(",")[0]]
+    return "\n".join([f"Novo anúncio ({NOMES[anuncio['origem']]})", anuncio["titulo"][:150],
+                      " · ".join(x for x in facts if x), anuncio["url"]])
+
+
 def mensagem(anuncio, analise, old_price):
     facts = [euros(anuncio["preco"])]
     if anuncio["ano"]:
@@ -509,6 +521,10 @@ def processar(db, anuncio, config, referencia):
         analise = avaliar(db, anuncio, config)
         if analise and not duplicado(db, anuncio):
             alert = mensagem(anuncio, analise, old_price if dropped else None)
+        elif config["alertar_todos"] and row is None and ENVIADOS_TODOS[0] < config["max_alertas_todos"]:
+            ENVIADOS_TODOS[0] += 1  # ponytail: teto por execução para o Telegram não bloquear o bot
+            alert = mensagem_simples(anuncio)
+        if alert:
             send(alert, anuncio["foto"])  # se falhar, nada é guardado e o anúncio é tentado no próximo ciclo
             print(f"{datetime.now():%H:%M:%S} Alerta ({NOMES[anuncio['origem']]}): {anuncio['titulo']}", flush=True)
     with db:
@@ -617,7 +633,7 @@ PADROES = {
     "intervalo_segundos": 60, "paginas_max": 5, "paginas_semente": 15, "paginas_exploracao": 3,
     "preco_min": 300, "preco_max": 15000, "ano_min": 2005, "km_max": 250000, "km_ano_max": 20000,
     "desconto_mercado": 0.85, "limite_burla": 0.5, "min_comparaveis": 6, "descida_minima": 0.05,
-    "margem_minima": 800, "custos_revenda": 500, "pontuacao_minima": 60,
+    "margem_minima": 800, "custos_revenda": 500, "pontuacao_minima": 60, "alertar_todos": False, "max_alertas_todos": 40,
     "apenas_nacionais": False, "modelos": [], "excluir": [], "excluir_texto": [],
     "fontes": ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"],
     "facebook_cidades": ["lisbon"], "facebook_pesquisas": ["carro"],

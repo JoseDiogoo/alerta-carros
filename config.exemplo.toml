@@ -18,6 +18,8 @@ apenas_nacionais = false
 custos_revenda = 500           # inspeção, limpeza, pequenas reparações, anúncio (€)
 margem_minima = 800            # lucro estimado mínimo para alertar (€)
 pontuacao_minima = 60          # avaliação 0-100 (mercado, km, descrição, donos, garantia...)
+alertar_todos = false          # true = Telegram recebe TODOS os anúncios novos dentro dos filtros
+max_alertas_todos = 40         # máximo desses alertas por execução (30 em 30 min)
 desconto_mercado = 0.85        # e preço ≤ 85% do valor de mercado
 min_comparaveis = 6            # anúncios necessários para estimar o valor
 limite_burla = 0.5             # < 50% do mercado → alerta com aviso
