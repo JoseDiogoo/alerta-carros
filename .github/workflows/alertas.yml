@@ -47,3 +47,10 @@ jobs:
         with:
           path: config.sqlite3
           key: estado-${{ github.run_id }}
+
+      - name: Manter a app Streamlit acordada
+        if: always()
+        continue-on-error: true
+        run: |
+          pip install --quiet selenium
+          python3 manter_acordada.py
