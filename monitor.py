@@ -727,8 +727,8 @@ def main():
             try:
                 total, referencia = (ciclo_facebook(db, config) if origem == "facebook"
                                      else ciclo_paginado(db, origem, config))
-                if referencia:
-                    print(f"{NOMES[origem]}: {total} anúncios guardados como referência inicial.", flush=True)
+                print(f"{NOMES[origem]}: {total} anúncios lidos" + (" (referência inicial)" if referencia else ""),
+                      flush=True)
             except (RuntimeError, KeyError, TypeError, ValueError, sqlite3.Error) as error:
                 print(f"{datetime.now():%H:%M:%S} {NOMES[origem]}: {error}", flush=True)
                 failed = True
