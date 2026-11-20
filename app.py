@@ -11,28 +11,23 @@ import monitor as m
 st.set_page_config(page_title="Alerta Carros", layout="wide")
 st.markdown("""
 <style>
-  .block-container {padding-top: 2rem}
-  .hero h1 {font-size: 2.6rem; margin: 0; letter-spacing: -.03em}
-  .hero p {color: #9ca3af; margin: .2rem 0 1rem}
-  .preco {font-size: 1.55rem; font-weight: 800; margin: 0; color: #f9fafb}
-  .mercado {color: #9ca3af; font-size: .82rem; margin: 0}
-  .margem {color: #4ade80; font-weight: 800; font-size: 1.05rem; margin: .15rem 0 .3rem}
+  .hero h1 {font-size: 2.4rem; font-weight: 800; margin: 0}
+  .hero h1 span {color: #e3242b}
+  .hero p {color: #a3a3a3; margin: .2rem 0 1rem}
+  .marca {font-weight: 700; color: #fff; margin: .5rem 0 0}
+  .titulo {color: #a3a3a3; font-size: .85rem; height: 2.5em; overflow: hidden; margin: 0 0 .3rem}
+  .preco {font-size: 1.5rem; font-weight: 800; margin: 0; color: #e3242b}
+  .mercado {color: #a3a3a3; font-size: .8rem; margin: 0}
+  .margem {color: #22c55e; font-weight: 700; margin: .1rem 0 .3rem}
   .margem.neg {color: #f87171}
-  .selo {display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 700;
-         font-size: .78rem; background: #16a34a; color: #fff}
+  .selo {display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .75rem;
+         background: #e3242b; color: #fff}
   .selo.suspeito {background: #d97706}
-  .selo.neutro {background: #374151; color: #e5e7eb}
-  .titulo {font-weight: 600; line-height: 1.25; height: 2.5em; overflow: hidden; margin: .45rem 0 .25rem;
-           color: #e5e7eb}
-  .detalhes {color: #9ca3af; font-size: .82rem; margin: 0; min-height: 2.4em}
-  div[data-testid="stImage"] img {border-radius: 12px; aspect-ratio: 4/3; object-fit: cover}
-  div[data-testid="stVerticalBlockBorderWrapper"] {transition: transform .15s, box-shadow .15s}
-  div[data-testid="stVerticalBlockBorderWrapper"]:hover {transform: translateY(-3px);
-      box-shadow: 0 10px 30px rgba(0,0,0,.45)}
-  div[data-testid="stMetric"] {background: #111827; border: 1px solid #1f2937; border-radius: 14px;
-      padding: 14px 18px}
-  /* sem ecrã cinzento enquanto procura: o conteúdo antigo fica nítido até chegar o novo */
-  [data-stale="true"], .stale-element {opacity: 1 !important; filter: none !important; transition: none !important}
+  .selo.neutro {background: #333; color: #d4d4d4}
+  .detalhes {color: #a3a3a3; font-size: .8rem; margin: 0 0 .4rem; min-height: 2.2em}
+  div[data-testid="stImage"] img {border-radius: 10px; aspect-ratio: 4/3; object-fit: cover}
+  /* sem ecrã cinzento enquanto procura */
+  [data-stale="true"], .stale-element {opacity: 1 !important; transition: none !important}
   div[data-testid="stStatusWidget"] {visibility: hidden}
 </style>""", unsafe_allow_html=True)
 
@@ -198,8 +193,10 @@ def cartao(anuncio, chave, favorito=False):
             margem = f'<p class="{classe}">margem {sinal}{euros(abs(anuncio["margem"]))}</p>'
         mercado = (f'<p class="mercado">mercado ~{euros(anuncio["mediana"])} · {anuncio["n"]} anúncios</p>'
                    if anuncio["mediana"] else '<p class="mercado">&nbsp;</p>')
-        st.markdown(f'{selo}<p class="titulo">{anuncio["titulo"][:90]}</p>'
-                    f'<p class="preco">{euros(anuncio["preco"])}</p>{mercado}{margem}', unsafe_allow_html=True)
+        modelo = (anuncio.get("modelo") or anuncio["titulo"]).title()
+        st.markdown(f'{selo}<p class="marca">{modelo}</p><p class="titulo">{anuncio["titulo"][:90]}</p>'
+                    f'<p class="preco">{euros(anuncio["preco"])}</p>{mercado}{margem}',
+                    unsafe_allow_html=True)
         detalhes = [str(anuncio["ano"]) if anuncio["ano"] else None,
                     f"{anuncio['km']:,} km".replace(",", " ") if anuncio["km"] else None,
                     anuncio["combustivel"], anuncio["caixa"],
@@ -229,9 +226,9 @@ def grelha(anuncios, prefixo, colunas=4, favorito=False):
 
 # ---------- página ----------
 
-st.markdown('<div class="hero"><h1>Alerta Carros</h1><p>Os carros mais baratos face ao valor de mercado em '
-            f'{", ".join(m.NOMES[x] for x in FONTES_RAPIDAS)} — com margem de lucro estimada e '
-            'atualização a cada minuto.</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>Alerta <span>Carros</span></h1><p>Os carros mais baratos face ao valor de '
+            'mercado em Standvirtual, OLX, CustoJusto, Auto.pt e AutoX, com margem de lucro estimada e atualização '
+            'a cada minuto.</p></div>', unsafe_allow_html=True)
 
 negocios, favoritos, mercado_tab, procura = st.tabs(
     ["Melhores negócios", "Favoritos", "Mercado", "Pesquisar modelo"])
