@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import monitor
-from monitor import abrir_db, carro, ciclo_paginado, km_do_texto, load_config
+from monitor import abrir_db, carro, ciclo_paginado, km_do_texto, load_config, modelo_de
 
 EXEMPLO = Path(__file__).with_name("config.exemplo.toml")
 
@@ -30,30 +30,32 @@ class MonitorTest(unittest.TestCase):
             ciclo_paginado(self.db, origem, self.config)
         return [call.args[0] for call in send.call_args_list]
 
-    def test_km_do_texto(self):
+    def test_texto(self):
         self.assertEqual(km_do_texto("ano 2021 158 mil kms"), 158000)
         self.assertEqual(km_do_texto("158.000 km"), 158000)
         self.assertEqual(km_do_texto("Clio 1.5 dci 2015"), None)
+        self.assertEqual(modelo_de("2015 VW Golf 1.6 TDI"), "volkswagen golf")
+        self.assertEqual(modelo_de("Vendo Renault Clio"), "renault clio")
 
     def test_fluxo_completo(self):
-        # 1.º ciclo: referência inicial, 12 Yaris a ~6000 € e nenhum alerta
+        # 1.º ciclo: referência inicial (mercado do Yaris 2012 ≈ 6000 €), sem alertas
         mercado = [yaris(f"m{i}", 5800 + i * 40) for i in range(12)]
         self.assertEqual(self.ciclo(p1=mercado), [])
 
         novos = [
-            yaris("barato", 4500),                                   # 25% abaixo → alerta
-            yaris("justo", 5900),                                    # na mediana → não
+            yaris("barato", 4500),                                   # margem ≈ 1000 € → alerta
+            yaris("justo", 5900),                                    # no mercado → não
+            yaris("pouca", 5200),                                    # margem < 800 € → não
             yaris("pecas", 2500, titulo="Toyota Yaris para peças"),  # excluído
-            yaris("caro", 9000),                                     # acima do preco_max
-            yaris("km", 4000, km=260000),                            # km a mais
+            yaris("km", 4000, km=300000),                            # km a mais
             yaris("burla", 2000),                                    # alerta com aviso
-            carro("olx", "outro", "Fiat Punto", 3000, "https://exemplo/outro"),  # sem regra
+            carro("olx", "outro", "Fiat Punto", 3000, "https://exemplo/outro", ano=2012),  # sem mercado
         ]
         alertas = self.ciclo(p1=novos + mercado[:1])
         self.assertEqual(len(alertas), 2, alertas)
         self.assertIn("4 500 €", alertas[0])
-        self.assertIn("abaixo da mediana", alertas[0])
-        self.assertIn("⚠️", alertas[1])
+        self.assertIn("Margem estimada", alertas[0])
+        self.assertIn("ATENÇÃO", alertas[1])
 
         # repetidos não voltam a alertar; descida ≥ 5% volta
         self.assertEqual(self.ciclo(p1=novos), [])
@@ -64,6 +66,11 @@ class MonitorTest(unittest.TestCase):
         # o mesmo carro noutro site não duplica o alerta
         self.ciclo("standvirtual", p1=[yaris("ref", 6000, origem="standvirtual")])
         self.assertEqual(self.ciclo("standvirtual", p1=[yaris("sv1", 4500, origem="standvirtual")]), [])
+
+    def test_lista_de_modelos_restringe(self):
+        self.ciclo(p1=[yaris(f"m{i}", 6000) for i in range(10)])
+        self.config["modelos"] = ["honda jazz"]
+        self.assertEqual(self.ciclo(p1=[yaris("novo", 4000)]), [])
 
     def test_pagina_ate_encontrar_conhecido(self):
         self.ciclo(p1=[yaris("a", 6000)])

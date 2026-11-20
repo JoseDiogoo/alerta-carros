@@ -1,14 +1,16 @@
-# 🚗 Alerta Carros
+# Alerta Carros
 
-Encontra carros **bons e baratos** em Portugal e avisa no Telegram, sem serviços pagos.
+Encontra os carros mais baratos face ao **valor de mercado** em Portugal, estima a **margem de lucro** e avisa no Telegram, sem serviços pagos.
 
-Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace** e compara cada anúncio com a **mediana do mercado** (mesmo modelo, ano ±1, em todos os sites).
+Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**. Não há lista fixa de carros: o modelo é detetado no título (marca + modelo, com as versões desportivas à parte) e cada anúncio é comparado com a mediana do mesmo modelo, ano ±1 e km parecidos.
 
-- `monitor.py` corre no PC, verifica os sites de minuto a minuto e envia os alertas para o Telegram, com foto, preço, ano, km, local, desconto face ao mercado e link.
-- `app.py` é o painel Streamlit. Tem os negócios do momento em cartões, os ⭐ favoritos e a pesquisa por modelo, e atualiza-se sozinho.
-- `config.toml` define o que conta como "bom e barato": preço, ano, km, km por ano, desconto mínimo, exclusões e modelos. Para começar, copia `config.exemplo.toml`.
+**Margem estimada = valor de mercado − preço − custos de revenda.** São preços pedidos e não preços de venda, por isso a margem real tende a ser um pouco menor.
 
-Os pormenores técnicos de cada fonte (frescura, campos e cobertura) estão em [PESQUISA.md](PESQUISA.md).
+- `monitor.py` corre no PC, verifica os sites de minuto a minuto e envia os alertas para o grupo do Telegram, com foto, preço, ano, km, margem, valor de mercado e link. Também lê, aos poucos, páginas mais antigas para conhecer o mercado inteiro (cerca de 45 mil carros no Standvirtual).
+- `app.py` é o painel Streamlit em modo escuro, com os melhores negócios por margem, os favoritos, os preços de mercado por modelo e ano e a pesquisa por modelo. Tem filtros de marca, modelo, combustível, caixa, preço, ano, km, vendedor, site, zona, custos, margem e desconto.
+- `config.toml` guarda os critérios por defeito. `modelos = []` significa todos os carros. Para começar, copia `config.exemplo.toml`.
+
+Os pormenores técnicos de cada fonte estão em [PESQUISA.md](PESQUISA.md).
 
 ## Painel
 
@@ -21,16 +23,16 @@ Na primeira abertura, o painel junta preços de referência durante cerca de 2 m
 
 ## Alertas no Telegram (24/7 no PC)
 
-1. No @BotFather, cria um bot com `/newbot` e guarda o token.
-2. Cria um grupo com quem deve receber os alertas, adiciona o bot e escreve uma mensagem no grupo.
-3. No PowerShell, na pasta do projeto:
+O bot é o @alerta_carros_pt_bot e o grupo é "Alerta Carros". Os segredos ficam em `.streamlit/secrets.toml`, que não vai para o Git:
+
+```toml
+TELEGRAM_BOT_TOKEN = "o token do @BotFather"
+TELEGRAM_CHAT_ID = "-5586087955"
+```
 
 ```powershell
 Copy-Item config.exemplo.toml config.toml
-$env:TELEGRAM_BOT_TOKEN = [System.Net.NetworkCredential]::new('', (Read-Host 'Token do bot' -AsSecureString)).Password
-python monitor.py --chat-id          # mostra o ID do grupo (número negativo)
-$env:TELEGRAM_CHAT_ID = Read-Host 'ID do grupo'
-python monitor.py --test-telegram
+python monitor.py --test-telegram   # a mensagem de teste deve chegar ao grupo
 python monitor.py
 ```
 

@@ -55,8 +55,12 @@ def descarregar(url):
 
 def secret(name):
     value = os.environ.get(name, "").strip()
+    segredos = ROOT / ".streamlit" / "secrets.toml"
+    if not value and segredos.is_file():
+        with segredos.open("rb") as file:
+            value = str(tomllib.load(file).get(name, "")).strip()
     if not value:
-        raise ValueError(f"Define {name} no PowerShell.")
+        raise ValueError(f"Define {name} em .streamlit/secrets.toml ou no PowerShell.")
     return value
 
 
@@ -120,6 +124,47 @@ def km_do_texto(texto):
     return value if 1000 <= value < 1_000_000 else None
 
 
+COMBUSTIVEIS = {"diesel": "Gasóleo", "gasoleo": "Gasóleo", "gasolina": "Gasolina", "petrol": "Gasolina",
+                "gaz": "Gasolina", "gpl": "GPL", "lpg": "GPL", "hibrido": "Híbrido", "hybrid": "Híbrido",
+                "electric": "Elétrico", "eletrico": "Elétrico", "electrico": "Elétrico"}
+
+
+def combustivel(valor):
+    return next((COMBUSTIVEIS[w] for w in words(valor or "").split() if w in COMBUSTIVEIS), None)
+
+
+def caixa(valor):
+    chave = words(valor or "")
+    return "Automática" if "auto" in chave else "Manual" if "manual" in chave else None
+
+
+VERSOES_DESPORTIVAS = {"gti", "gtd", "gte", "r", "rs", "amg", "cupra", "st", "vrs", "type", "abarth", "nismo",
+                       "m3", "m4", "m5", "jcw", "srt", "svr", "gsi", "opc", "ts"}
+IGNORAR_NO_INICIO = {"vendo", "vende", "se", "venda", "novo", "usado", "carro", "urgente", "oportunidade"}
+MARCAS_ALIAS = {"vw": "volkswagen", "mercedes": "mercedes-benz", "merc": "mercedes-benz",
+                "alfa": "alfa-romeo", "land": "land-rover", "range": "land-rover"}
+
+
+def modelo_de(titulo):
+    """"2015 VW Golf 1.6 TDI" -> "volkswagen golf". Sem lista fixa: marca + 1.ª palavra do modelo."""
+    # ponytail: heurística pelo título; usar make/model estruturados se aparecerem modelos trocados
+    tokens = [t for t in words(titulo).split() if not re.fullmatch(r"(19|20)\d\d", t)]
+    while tokens and tokens[0] in IGNORAR_NO_INICIO:
+        tokens.pop(0)
+    if len(tokens) < 2:
+        return None
+    marca, resto = MARCAS_ALIAS.get(tokens[0], tokens[0]), tokens[1:]
+    while resto and resto[0] in {"benz", "romeo", "rover"}:
+        resto = resto[1:]
+    if not resto:
+        return None
+    modelo = f"{marca} {resto[0]}"
+    if resto[0] in {"model", "serie", "series", "classe", "class", "grand", "range"} and len(resto) > 1:
+        modelo += f" {resto[1]}"
+    desportiva = next((t for t in resto[1:] if t in VERSOES_DESPORTIVAS), None)
+    return f"{modelo} {desportiva}" if desportiva else modelo
+
+
 def next_data(page):
     match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', page, re.S)
     if not match:
@@ -130,7 +175,8 @@ def next_data(page):
 def carro(origem, id, titulo, preco, url, **extra):
     return {"origem": origem, "id": str(id), "titulo": (titulo or "").strip(), "preco": preco,
             "url": url, "km": None, "ano": None, "local": "", "profissional": None,
-            "importado": None, "avaliacao_site": None, "texto": "", "destaque": False, "foto": None, **extra}
+            "importado": None, "avaliacao_site": None, "texto": "", "destaque": False, "foto": None,
+            "combustivel": None, "caixa": None, **extra}
 
 
 # ---------- fontes ----------
@@ -160,7 +206,8 @@ def standvirtual(pagina, caminho=""):
                     importado=params.get("origin") == "imported" if "origin" in params else None,
                     avaliacao_site=AVALIACAO_SITE.get((node.get("priceEvaluation") or {}).get("indicator")),
                     texto=node.get("shortDescription") or "", destaque=bool(node.get("isPremiumTopAd")),
-                    foto=(node.get("thumbnail") or {}).get("x2"))
+                    foto=(node.get("thumbnail") or {}).get("x2"),
+                    combustivel=combustivel(params.get("fuel_type")), caixa=caixa(params.get("gearbox")))
 
 
 def olx(pagina, termo=None):
@@ -182,7 +229,8 @@ def olx(pagina, termo=None):
                     profissional=ad.get("isBusiness"),
                     importado=params.get("origin") == "imported" if params.get("origin") else None,
                     texto=ad.get("description") or "", destaque=bool(ad.get("isPromoted")),
-                    foto=re.sub(r";s=\d+x\d+", ";s=640x480", (ad.get("photos") or [""])[0]) or None)
+                    foto=re.sub(r";s=\d+x\d+", ";s=640x480", (ad.get("photos") or [""])[0]) or None,
+                    combustivel=combustivel(params.get("combustivel")), caixa=caixa(params.get("gearbox")))
 
 
 def custojusto(pagina):
@@ -199,7 +247,9 @@ def custojusto(pagina):
                     ano=inteiro((ad.get("params") or {}).get("regdate")) or ano_do_texto(text),
                     local=", ".join(filter(None, [names.get("county"), names.get("district")])),
                     profissional=ad.get("companyAd"), texto=ad.get("body") or "",
-                    foto=ad.get("imageFullURL"))
+                    foto=ad.get("imageFullURL"),
+                    combustivel=combustivel((ad.get("params") or {}).get("fuel")),
+                    caixa=caixa((ad.get("params") or {}).get("gearbox")))
 
 
 def autopt(pagina):
@@ -291,10 +341,13 @@ PAGINADAS = {"standvirtual": standvirtual, "olx": olx, "custojusto": custojusto,
 
 # ---------- avaliação ----------
 
-def escolher_regra(anuncio, config):
-    title = f" {words(anuncio['titulo'])} "
-    return next((rule for rule in config["regras"]
-                 if all(f" {words(term)} " in title for term in rule["termos"])), None)
+def interessa(anuncio, config):
+    """Filtros do utilizador (config.toml ou painel). Lista de modelos vazia = todos os carros."""
+    if not anuncio.get("modelo") or excluido(anuncio, config):
+        return False
+    modelos = [words(m) for m in config["modelos"]]
+    return not modelos or anuncio["modelo"].replace("-", " ") in [m.replace("-", " ") for m in modelos] \
+        or any(f" {m} " in f" {words(anuncio['titulo'])} " for m in modelos)
 
 
 def excluido(anuncio, config):
@@ -304,113 +357,121 @@ def excluido(anuncio, config):
             or any(f" {words(term)} " in text for term in config["excluir_texto"]))
 
 
-def limite(rule, config, key):
-    return rule.get(key, config[key])
-
-
-def dentro_dos_limites(anuncio, rule, config):
+def dentro_dos_limites(anuncio, config):
     price, km, year = anuncio["preco"], anuncio["km"], anuncio["ano"]
-    if not limite(rule, config, "preco_min") <= price <= limite(rule, config, "preco_max"):
+    if not config["preco_min"] <= price <= config["preco_max"]:
         return False
-    if year and year < limite(rule, config, "ano_min"):
+    if year and year < config["ano_min"]:
         return False
-    if km and km > limite(rule, config, "km_max"):
+    if km and km > config["km_max"]:
         return False
-    if km and year and km / max(1, datetime.now().year - year) > limite(rule, config, "km_ano_max"):
+    if km and year and km / max(1, datetime.now().year - year) > config["km_ano_max"]:
         return False
     return not (config["apenas_nacionais"] and anuncio["importado"])
 
 
-def mercado(db, anuncio, rule):
-    """Mediana de anúncios do mesmo modelo com ano ±1, de todas as fontes."""
-    if not anuncio["ano"]:
+def mercado(db, anuncio, minimo=1):
+    """Valor de mercado: mediana do mesmo modelo, ano ±1 e, se houver amostra, km parecidos."""
+    if not (anuncio.get("modelo") and anuncio["ano"]):
         return None, 0
-    # ponytail: compara por ano ±1; juntar faixa de km se as medianas saírem largas demais
-    prices = [row[0] for row in db.execute(
-        "SELECT preco FROM anuncios WHERE regra = ? AND ano BETWEEN ? AND ? "
-        "AND NOT (origem = ? AND id = ?)",
-        (rule["nome"], anuncio["ano"] - 1, anuncio["ano"] + 1, anuncio["origem"], anuncio["id"]))]
-    return (statistics.median(prices) if prices else None), len(prices)
+    base = ("SELECT preco FROM anuncios WHERE modelo = ? AND ano BETWEEN ? AND ? "
+            "AND NOT (origem = ? AND id = ?) AND preco >= 300")
+    args = [anuncio["modelo"], anuncio["ano"] - 1, anuncio["ano"] + 1, anuncio["origem"], anuncio["id"]]
+    if anuncio["km"]:  # só compara com km parecidos: sem amostra não há estimativa (melhor que um valor errado)
+        margem_km = max(30000, anuncio["km"] * 0.35)
+        base += " AND km BETWEEN ? AND ?"
+        args += [anuncio["km"] - margem_km, anuncio["km"] + margem_km]
+    prices = [r[0] for r in db.execute(base, args)]
+    return (statistics.median(prices) if len(prices) >= minimo else None), len(prices)
 
 
-def avaliar(db, anuncio, rule, config):
-    """Devolve as linhas de análise do alerta, ou None se não for bom e barato."""
-    if not dentro_dos_limites(anuncio, rule, config):
+def avaliar(db, anuncio, config):
+    """Análise do negócio, ou None se não passar os filtros/margem."""
+    if not (interessa(anuncio, config) and dentro_dos_limites(anuncio, config)):
         return None
-    median, count = mercado(db, anuncio, rule)
-    if count >= config["min_comparaveis"]:
-        ratio = anuncio["preco"] / median
-        if ratio > config["desconto_mercado"]:
-            return None
-        lines = [f"📊 {100 - ratio * 100:.0f}% abaixo da mediana ({median:,.0f} €, "
-                 f"{count} anúncios {anuncio['ano'] - 1}–{anuncio['ano'] + 1})".replace(",", " ")]
-        if ratio < config["limite_burla"]:
-            lines.append("⚠️ Muito abaixo do mercado: confirma documentos e não pagues sinal antes de ver o carro.")
-        return lines
-    if anuncio["preco"] > limite(rule, config, "preco_sem_referencia"):
+    mediana, n = mercado(db, anuncio, config["min_comparaveis"])
+    if n < config["min_comparaveis"]:
         return None
-    return [f"📊 Sem referência suficiente ({count} anúncios comparáveis): passou os limites de preço/km/ano."]
+    ratio = anuncio["preco"] / mediana
+    margem = mediana - anuncio["preco"] - config["custos_revenda"]
+    if ratio > config["desconto_mercado"] or margem < config["margem_minima"]:
+        return None
+    return {"mediana": round(mediana), "n": n, "desconto": round((1 - ratio) * 100),
+            "margem": round(margem), "suspeito": ratio < config["limite_burla"]}
 
 
-def duplicado(db, anuncio, rule):
+def duplicado(db, anuncio):
     if not (anuncio["km"] and anuncio["ano"]):
         return False
     return db.execute(
-        "SELECT 1 FROM anuncios WHERE alertado = 1 AND regra = ? AND ano = ? AND km = ? "
+        "SELECT 1 FROM anuncios WHERE alertado = 1 AND modelo = ? AND ano = ? AND km = ? "
         "AND ABS(preco - ?) <= 250 AND origem != ?",
-        (rule["nome"], anuncio["ano"], anuncio["km"], anuncio["preco"], anuncio["origem"])).fetchone() is not None
+        (anuncio["modelo"], anuncio["ano"], anuncio["km"], anuncio["preco"], anuncio["origem"])).fetchone() is not None
 
 
-def mensagem(anuncio, rule, analysis, old_price):
-    facts = [f"{anuncio['preco']:,} €".replace(",", " ")]
+def euros(valor):
+    return f"{int(valor):,} €".replace(",", " ")
+
+
+def mensagem(anuncio, analise, old_price):
+    facts = [euros(anuncio["preco"])]
     if anuncio["ano"]:
         facts.append(str(anuncio["ano"]))
     if anuncio["km"]:
         facts.append(f"{anuncio['km']:,} km".replace(",", " "))
+    for extra in (anuncio["combustivel"], anuncio["caixa"]):
+        if extra:
+            facts.append(extra)
     if anuncio["profissional"] is not None:
         facts.append("profissional" if anuncio["profissional"] else "particular")
     if anuncio["importado"]:
         facts.append("importado")
-    header = f"🚗 {rule['nome']} · {NOMES[anuncio['origem']]}"
+    header = f"{anuncio['modelo'].title()} · {NOMES[anuncio['origem']]}"
     if anuncio["local"]:
-        header += f" · {anuncio['local'][:80]}"
-    lines = [header, anuncio["titulo"][:200], " · ".join(facts)]
+        header += f" · {anuncio['local'][:60]}"
+    lines = [header, anuncio["titulo"][:150], " · ".join(facts),
+             f"Margem estimada: +{euros(analise['margem'])}",
+             f"Mercado ~{euros(analise['mediana'])} ({analise['n']} anúncios) · {analise['desconto']}% abaixo"]
     if old_price:
-        lines.append(f"📉 Baixou de {old_price:,} €".replace(",", " "))
+        lines.append(f"Baixou de {euros(old_price)}")
     if anuncio["avaliacao_site"]:
-        lines.append(f"🏷️ {NOMES[anuncio['origem']]}: {anuncio['avaliacao_site']}")
-    return "\n".join(lines + analysis + [anuncio["url"]])
+        lines.append(f"{NOMES[anuncio['origem']]}: {anuncio['avaliacao_site']}")
+    if analise["suspeito"]:
+        lines.append("ATENÇÃO: muito abaixo do mercado. Confirma documentos e não pagues sinal antes de ver o carro.")
+    return "\n".join(lines + [anuncio["url"]])
 
 
 def processar(db, anuncio, config, referencia):
-    """Trata um anúncio. Devolve True se já era conhecido (para parar a paginação)."""
+    """Guarda um anúncio e alerta se for negócio. Devolve True se já era conhecido."""
     if not anuncio["preco"] or not anuncio["titulo"]:
         return False
+    anuncio["modelo"] = modelo_de(anuncio["titulo"])
     row = db.execute("SELECT preco FROM anuncios WHERE origem = ? AND id = ?",
                      (anuncio["origem"], anuncio["id"])).fetchone()
     old_price = row[0] if row else None
-    rule = None if excluido(anuncio, config) else escolher_regra(anuncio, config)
     dropped = old_price and anuncio["preco"] <= old_price * (1 - config["descida_minima"])
     alert = None
-    if rule and not referencia and (row is None or dropped):
+    if not referencia and (row is None or dropped) and interessa(anuncio, config):
         if (anuncio["origem"] == "autopt" and anuncio["km"] is None
-                and limite(rule, config, "preco_min") <= anuncio["preco"] <= limite(rule, config, "preco_max")):
+                and config["preco_min"] <= anuncio["preco"] <= config["preco_max"]):
             completar_autopt(anuncio)
-            rule = None if excluido(anuncio, config) else rule
-        analysis = rule and avaliar(db, anuncio, rule, config)
-        if analysis and not duplicado(db, anuncio, rule):
-            alert = mensagem(anuncio, rule, analysis, old_price if dropped else None)
+            anuncio["modelo"] = modelo_de(anuncio["titulo"])
+        analise = avaliar(db, anuncio, config)
+        if analise and not duplicado(db, anuncio):
+            alert = mensagem(anuncio, analise, old_price if dropped else None)
             send(alert, anuncio["foto"])  # se falhar, nada é guardado e o anúncio é tentado no próximo ciclo
             print(f"{datetime.now():%H:%M:%S} Alerta ({NOMES[anuncio['origem']]}): {anuncio['titulo']}", flush=True)
     with db:
         db.execute(
-            "INSERT INTO anuncios (origem, id, regra, preco, ano, km, alertado, visto_em, titulo, url, local, foto) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (origem, id) DO UPDATE SET "
-            "preco = excluded.preco, regra = excluded.regra, ano = coalesce(excluded.ano, ano), "
-            "km = coalesce(excluded.km, km), alertado = max(alertado, excluded.alertado)",
-            (anuncio["origem"], anuncio["id"], rule and rule["nome"], anuncio["preco"],
-             anuncio["ano"], anuncio["km"], int(alert is not None), datetime.now(UTC).isoformat(),
-             anuncio["titulo"], anuncio["url"], anuncio["local"], anuncio["foto"]))
+            "INSERT INTO anuncios (origem, id, modelo, preco, ano, km, alertado, visto_em, titulo, url, local, "
+            "foto, combustivel, caixa, profissional, importado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (origem, id) DO UPDATE SET preco = excluded.preco, modelo = excluded.modelo, "
+            "ano = coalesce(excluded.ano, ano), km = coalesce(excluded.km, km), "
+            "alertado = max(alertado, excluded.alertado), foto = coalesce(excluded.foto, foto)",
+            (anuncio["origem"], anuncio["id"], anuncio["modelo"], anuncio["preco"], anuncio["ano"], anuncio["km"],
+             int(alert is not None), datetime.now(UTC).isoformat(), anuncio["titulo"], anuncio["url"],
+             anuncio["local"], anuncio["foto"], anuncio["combustivel"], anuncio["caixa"],
+             anuncio["profissional"], anuncio["importado"]))
     return row is not None and not anuncio["destaque"]
 
 
@@ -433,8 +494,8 @@ def ciclo_paginado(db, origem, config, so_guardar=False):
     return total, referencia
 
 
-def faixas(rule, config):
-    low, high = limite(rule, config, "preco_min"), limite(rule, config, "preco_max")
+def faixas(config):
+    low, high = config["preco_min"], config["preco_max"]
     step = math.ceil((high - low) / config["facebook_faixas"])
     return [(start, min(high, start + step)) for start in range(low, high, step)]
 
@@ -442,10 +503,11 @@ def faixas(rule, config):
 def ciclo_facebook(db, config):
     referencia = fonte_vazia(db, "facebook")
     total = 0
-    for rule in config["regras"]:
+    pesquisas = config["modelos"] or config["facebook_pesquisas"]
+    for termo in pesquisas:
         for cidade in config["facebook_cidades"]:
-            for low, high in faixas(rule, config):
-                anuncios = list(facebook(" ".join(rule["termos"]), cidade, low, high))
+            for low, high in faixas(config):
+                anuncios = list(facebook(termo, cidade, low, high))
                 total += len(anuncios)
                 for anuncio in anuncios:
                     processar(db, anuncio, config, referencia)
@@ -453,49 +515,68 @@ def ciclo_facebook(db, config):
     return total, referencia
 
 
-def semear(db, config):
-    """Recolhe anúncios antigos do OLX por modelo para ter medianas desde o primeiro dia."""
-    if "olx" in config["fontes"] and fonte_vazia(db, "olx"):
-        ciclo_paginado(db, "olx", config)  # referência do feed antes de a semente o "encher"
-    for rule in config["regras"]:
-        count = db.execute("SELECT COUNT(*) FROM anuncios WHERE regra = ?", (rule["nome"],)).fetchone()[0]
-        if count >= config["min_comparaveis"] * 5:
+LIMITE_PAGINAS = {"standvirtual": 1500, "olx": 25, "custojusto": 400}
+
+
+def explorar(db, config, aviso=print):
+    """Lê páginas mais antigas aos poucos para o valor de mercado cobrir todos os modelos."""
+    db.execute("CREATE TABLE IF NOT EXISTS estado (chave TEXT PRIMARY KEY, valor INTEGER)")
+    for origem, limite_paginas in LIMITE_PAGINAS.items():
+        if origem not in config["fontes"]:
             continue
+        chave = f"explorar_{origem}"
+        row = db.execute("SELECT valor FROM estado WHERE chave = ?", (chave,)).fetchone()
+        pagina = row[0] if row else 2
         try:
-            for pagina in range(1, config["paginas_semente"] + 1):
-                anuncios = list(olx(pagina, " ".join(rule["termos"])))
+            for _ in range(config["paginas_exploracao"]):
+                anuncios = list(PAGINADAS[origem](pagina))
                 for anuncio in anuncios:
                     processar(db, anuncio, config, referencia=True)
-                if len(anuncios) < 40:
-                    break
+                pagina = 2 if not anuncios or pagina >= limite_paginas else pagina + 1
         except RuntimeError as error:
-            print(f"Referência {rule['nome']}: {error}", flush=True)
-            continue
-        count = db.execute("SELECT COUNT(*) FROM anuncios WHERE regra = ?", (rule["nome"],)).fetchone()[0]
-        print(f"Referência de mercado {rule['nome']}: {count} anúncios.", flush=True)
+            aviso(f"Mercado {NOMES[origem]}: {error}")
+        with db:
+            db.execute("INSERT OR REPLACE INTO estado VALUES (?, ?)", (chave, pagina))
+
+
+def semear(db, config, aviso=print):
+    """Junta anúncios mais antigos (todas as marcas) para o valor de mercado existir desde o 1.º dia."""
+    for origem in ("standvirtual", "olx"):
+        if origem in config["fontes"] and fonte_vazia(db, origem):
+            ciclo_paginado(db, origem, config)  # referência do feed antes da semente
+    if db.execute("SELECT COUNT(*) FROM anuncios").fetchone()[0] < config["paginas_semente"] * 60:
+        explorar(db, {**config, "paginas_exploracao": config["paginas_semente"]}, aviso)
+    for termo in config["modelos"]:
+        try:
+            for pagina in (1, 2, 3):
+                for anuncio in olx(pagina, termo):
+                    processar(db, anuncio, config, referencia=True)
+        except RuntimeError as error:
+            aviso(f"Referência {termo}: {error}")
+    total = db.execute("SELECT COUNT(*) FROM anuncios").fetchone()[0]
+    aviso(f"Referência de mercado: {total} anúncios.")
 
 
 # ---------- configuração ----------
 
 PADROES = {
-    "intervalo_segundos": 60, "paginas_max": 5, "paginas_semente": 5,
-    "preco_min": 1000, "preco_max": 8000, "preco_sem_referencia": 8000,
-    "ano_min": 2008, "km_max": 200000, "km_ano_max": 15000,
-    "desconto_mercado": 0.85, "limite_burla": 0.5, "min_comparaveis": 8, "descida_minima": 0.05,
-    "apenas_nacionais": False, "excluir": [], "excluir_texto": [],
+    "intervalo_segundos": 60, "paginas_max": 5, "paginas_semente": 15, "paginas_exploracao": 3,
+    "preco_min": 1000, "preco_max": 15000, "ano_min": 2005, "km_max": 250000, "km_ano_max": 20000,
+    "desconto_mercado": 0.85, "limite_burla": 0.5, "min_comparaveis": 6, "descida_minima": 0.05,
+    "margem_minima": 800, "custos_revenda": 500,
+    "apenas_nacionais": False, "modelos": [], "excluir": [], "excluir_texto": [],
     "fontes": ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"],
-    "facebook_cidades": ["lisbon"], "facebook_cada_minutos": 10, "facebook_faixas": 2,
+    "facebook_cidades": ["lisbon"], "facebook_pesquisas": ["carro"],
+    "facebook_cada_minutos": 10, "facebook_faixas": 3,
 }
 
 
 def load_config(path):
     with path.open("rb") as file:
         config = {**PADROES, **tomllib.load(file)}
-    if not config.get("regras"):
-        raise ValueError("Configura pelo menos uma regra (modelo) em [[regras]].")
     if any(source not in NOMES for source in config["fontes"]):
         raise ValueError(f"Fontes válidas: {', '.join(NOMES)}.")
-    for key in ("intervalo_segundos", "paginas_max", "paginas_semente", "min_comparaveis",
+    for key in ("intervalo_segundos", "paginas_max", "paginas_semente", "paginas_exploracao", "min_comparaveis",
                 "facebook_cada_minutos", "facebook_faixas"):
         if type(config[key]) is not int or config[key] < 1:
             raise ValueError(f"{key} tem de ser um número inteiro positivo.")
@@ -504,25 +585,31 @@ def load_config(path):
     for key in ("desconto_mercado", "limite_burla", "descida_minima"):
         if not 0 < config[key] < 1:
             raise ValueError(f"{key} tem de estar entre 0 e 1 (ex.: 0.85).")
-    for rule in config["regras"]:
-        if not str(rule.get("nome", "")).strip() or not rule.get("termos") or not all(words(t) for t in rule["termos"]):
-            raise ValueError("Cada regra precisa de nome e termos não vazios.")
-        if not 0 < limite(rule, config, "preco_min") < limite(rule, config, "preco_max"):
-            raise ValueError(f"{rule['nome']}: preco_min tem de ser menor do que preco_max.")
-    if any(not words(term) for term in config["excluir"] + config["excluir_texto"]):
-        raise ValueError("A lista de exclusões contém um termo vazio.")
+    if not 0 < config["preco_min"] < config["preco_max"]:
+        raise ValueError("preco_min tem de ser menor do que preco_max.")
+    if any(not words(term) for term in config["excluir"] + config["excluir_texto"] + config["modelos"]):
+        raise ValueError("As listas de modelos/exclusões contêm um termo vazio.")
     return config
 
 
 def abrir_db(path, **opcoes):
     db = sqlite3.connect(path, timeout=20, **opcoes)
-    db.execute("CREATE TABLE IF NOT EXISTS anuncios (origem TEXT, id TEXT, regra TEXT, preco INTEGER, "
-               "ano INTEGER, km INTEGER, alertado INTEGER DEFAULT 0, visto_em TEXT, titulo TEXT, url TEXT, "
-               "local TEXT, PRIMARY KEY (origem, id))")
-    db.execute("CREATE INDEX IF NOT EXISTS anuncios_regra ON anuncios (regra, ano)")
+    db.execute("CREATE TABLE IF NOT EXISTS anuncios (origem TEXT, id TEXT, preco INTEGER, ano INTEGER, "
+               "km INTEGER, alertado INTEGER DEFAULT 0, visto_em TEXT, titulo TEXT, url TEXT, local TEXT, "
+               "PRIMARY KEY (origem, id))")
     colunas = {row[1] for row in db.execute("PRAGMA table_info(anuncios)")}
-    if "foto" not in colunas:
-        db.execute("ALTER TABLE anuncios ADD COLUMN foto TEXT")
+    for coluna in ("modelo", "foto", "combustivel", "caixa", "profissional", "importado"):
+        if coluna not in colunas:
+            db.execute(f"ALTER TABLE anuncios ADD COLUMN {coluna}")
+    db.execute("CREATE INDEX IF NOT EXISTS anuncios_modelo ON anuncios (modelo, ano)")
+    versao = db.execute("PRAGMA user_version").fetchone()[0]
+    antigos = db.execute("SELECT origem, id, titulo FROM anuncios WHERE titulo IS NOT NULL AND "
+                         "(modelo IS NULL OR ? < 2)", (versao,)).fetchall()
+    db.execute("PRAGMA user_version = 2")
+    if antigos:
+        with db:
+            db.executemany("UPDATE anuncios SET modelo = ? WHERE origem = ? AND id = ?",
+                           [(modelo_de(t), o, i) for o, i, t in antigos])
     return db
 
 
@@ -567,6 +654,7 @@ def main():
             except (RuntimeError, KeyError, TypeError, ValueError, sqlite3.Error) as error:
                 print(f"{datetime.now():%H:%M:%S} {NOMES[origem]}: {error}", flush=True)
                 failed = True
+        explorar(db, config)
         if args.once:
             return int(failed)
         time.sleep(config["intervalo_segundos"])
