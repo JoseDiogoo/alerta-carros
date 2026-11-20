@@ -46,6 +46,7 @@ COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto
 
 @st.cache_resource
 def estado():
+    esquema = 3  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
     db = m.abrir_db(m.ROOT / "painel.sqlite3", check_same_thread=False)
     db.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
                "guardado_em TEXT, PRIMARY KEY (origem, id))")

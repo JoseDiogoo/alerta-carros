@@ -76,7 +76,15 @@ def telegram(method, **data):
     return response["result"]
 
 
+ULTIMO_ENVIO = [0.0]
+
+
 def send(message, foto=None):
+    # Telegram: grupos aceitam ~20 mensagens/minuto; acima disso responde HTTP 429
+    espera = ULTIMO_ENVIO[0] + 3.2 - time.monotonic()
+    if espera > 0:
+        time.sleep(espera)
+    ULTIMO_ENVIO[0] = time.monotonic()
     chat = secret("TELEGRAM_CHAT_ID")
     if foto and len(message) <= 1024:
         try:

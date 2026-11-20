@@ -16,7 +16,7 @@ concurrency:
 jobs:
   alertar:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
