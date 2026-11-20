@@ -31,6 +31,9 @@ st.markdown("""
       box-shadow: 0 10px 30px rgba(0,0,0,.45)}
   div[data-testid="stMetric"] {background: #111827; border: 1px solid #1f2937; border-radius: 14px;
       padding: 14px 18px}
+  /* sem ecrã cinzento enquanto procura: o conteúdo antigo fica nítido até chegar o novo */
+  [data-stale="true"], .stale-element {opacity: 1 !important; filter: none !important; transition: none !important}
+  div[data-testid="stStatusWidget"] {visibility: hidden}
 </style>""", unsafe_allow_html=True)
 
 CONFIG_PATH = m.ROOT / "config.toml"
@@ -80,6 +83,17 @@ def recolher():
 
 # ---------- filtros ----------
 
+ORDENS = {
+    "Maior margem de lucro": lambda a: -(a["margem"] if a["margem"] is not None else -10**9),
+    "Maior desconto face ao mercado": lambda a: -(a["desconto"] if a["desconto"] is not None else -10**9),
+    "Mais barato": lambda a: a["preco"],
+    "Mais caro": lambda a: -a["preco"],
+    "Menos quilómetros": lambda a: a["km"] or 10**9,
+    "Mais novo": lambda a: -(a["ano"] or 0),
+    "Mais recente no site": lambda a: 0,
+}
+
+
 def lista(sql, args=()):
     return [r[0] for r in estado()["db"].execute(sql, args) if r[0]]
 
@@ -87,7 +101,7 @@ def lista(sql, args=()):
 with st.sidebar:
     st.header("Filtros")
     f = {}
-    f["preco"] = st.slider("Preço (€)", 0, 60000, (BASE["preco_min"], BASE["preco_max"]), 500)
+    f["preco"] = st.slider("Preço (€)", 300, 60000, (max(300, BASE["preco_min"]), BASE["preco_max"]), 100)
     f["ano"] = st.slider("Ano", 1995, 2026, (BASE["ano_min"], 2026))
     f["km"] = st.slider("Km máximos", 10000, 400000, BASE["km_max"], 10000)
     marcas = st.multiselect("Marca", lista(
@@ -114,6 +128,9 @@ with st.sidebar:
     f["comparaveis"] = st.slider("Anúncios comparáveis mínimos", 3, 30, BASE["min_comparaveis"],
                                  help="Mais anúncios = valor de mercado mais fiável")
     f["excluir"] = st.toggle("Esconder peças, avariados e sinistrados", True)
+    st.header("Ordenar")
+    f["ordem"] = st.selectbox("Ordenar por", list(ORDENS))
+    f["so_negocios"] = st.toggle("Mostrar só negócios (margem e desconto mínimos)", True)
 
 
 def candidatos(limite=3000):
@@ -225,13 +242,15 @@ def painel():
     recolher()
     s = estado()
     analisados = [analisar(a, s["db"]) for a in candidatos()]
-    bons = sorted((a for a in analisados if a["bom"]), key=lambda a: -a["margem"])
+    escolhidos = [a for a in analisados if a["bom"]] if f["so_negocios"] else analisados
+    bons = sorted(escolhidos, key=ORDENS[f["ordem"]])  # sort estável: "mais recente" mantém a ordem da base
 
     a, b, c, d = st.columns(4)
     total = s["db"].execute("SELECT COUNT(*) FROM anuncios").fetchone()[0]
     a.metric("Carros conhecidos", f"{total:,}".replace(",", " "))
-    b.metric("Negócios", len(bons))
-    c.metric("Melhor margem", euros(bons[0]["margem"]) if bons else "—")
+    b.metric("Negócios", sum(1 for a in analisados if a["bom"]))
+    margens = [a["margem"] for a in analisados if a["bom"]]
+    c.metric("Melhor margem", euros(max(margens)) if margens else "—")
     d.metric("Atualizado às", time.strftime("%H:%M:%S", time.localtime(s["ultima"])) if s["ultima"] else "—")
     for origem, erro in s["erros"].items():
         st.warning(f"{m.NOMES[origem]}: {erro}")

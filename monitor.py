@@ -561,7 +561,7 @@ def semear(db, config, aviso=print):
 
 PADROES = {
     "intervalo_segundos": 60, "paginas_max": 5, "paginas_semente": 15, "paginas_exploracao": 3,
-    "preco_min": 1000, "preco_max": 15000, "ano_min": 2005, "km_max": 250000, "km_ano_max": 20000,
+    "preco_min": 300, "preco_max": 15000, "ano_min": 2005, "km_max": 250000, "km_ano_max": 20000,
     "desconto_mercado": 0.85, "limite_burla": 0.5, "min_comparaveis": 6, "descida_minima": 0.05,
     "margem_minima": 800, "custos_revenda": 500,
     "apenas_nacionais": False, "modelos": [], "excluir": [], "excluir_texto": [],

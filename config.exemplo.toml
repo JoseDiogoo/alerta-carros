@@ -7,7 +7,7 @@ paginas_exploracao = 3         # páginas antigas extra por ciclo e por site (o 
 
 # Que carros procurar
 modelos = []                   # vazio = TODOS os carros. Ex.: ["toyota yaris", "vw golf"] para restringir
-preco_min = 1000
+preco_min = 300
 preco_max = 15000
 ano_min = 2005
 km_max = 250000
