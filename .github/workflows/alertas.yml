@@ -30,14 +30,10 @@ jobs:
           restore-keys: estado-
 
       - name: Configuração da nuvem (exploração curta)
-        env:
-          ALERTAR_TODOS: ${{ vars.ALERTAR_TODOS || secrets.ALERTAR_TODOS || 'false' }}
         run: |
-          [ "$(echo "$ALERTAR_TODOS" | tr -d '[:space:]' | tr A-Z a-z)" = "true" ] && TODOS=true || TODOS=false
-          echo "Alertar todos os anúncios: $TODOS"
           sed -e 's/^fontes = .*/fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]/' \
               -e 's/^paginas_exploracao = .*/paginas_exploracao = 2/' \
-              -e "s/^alertar_todos = .*/alertar_todos = $TODOS/" \
+\
               config.exemplo.toml > config.toml
 
       - name: Procurar negócios e enviar alertas
