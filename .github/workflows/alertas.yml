@@ -1,0 +1,49 @@
+name: Alertas de carros
+
+# Corre na nuvem do GitHub de 30 em 30 minutos (cabe nos 2000 min/mês grátis de um repositório privado).
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alertas-carros
+  cancel-in-progress: false
+
+jobs:
+  alertar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Recuperar o mercado aprendido
+        uses: actions/cache/restore@v4
+        with:
+          path: config.sqlite3
+          key: estado-${{ github.run_id }}
+          restore-keys: estado-
+
+      - name: Configuração da nuvem (sem Facebook, exploração curta)
+        run: |
+          sed -e 's/^fontes = .*/fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox"]/' \
+              -e 's/^paginas_exploracao = .*/paginas_exploracao = 2/' \
+              config.exemplo.toml > config.toml
+
+      - name: Procurar negócios e enviar alertas
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: "-5586087955"
+        run: python3 monitor.py --once
+
+      - name: Guardar o mercado aprendido
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: config.sqlite3
+          key: estado-${{ github.run_id }}
