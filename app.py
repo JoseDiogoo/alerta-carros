@@ -39,7 +39,7 @@ FONTES_RAPIDAS = [x for x in BASE["fontes"] if x != "facebook"]  # o Facebook é
 ATUALIZAR_SEGUNDOS = 60
 SEM_FOTO = "https://placehold.co/640x480/1f2937/9ca3af?text=Sem+foto"
 COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto", "modelo", "combustivel",
-           "caixa", "profissional", "importado"]
+           "caixa", "profissional", "importado", "sinais", "extras"]
 
 
 # ---------- recolha partilhada por todas as sessões ----------
@@ -79,6 +79,7 @@ def recolher():
 # ---------- filtros ----------
 
 ORDENS = {
+    "Melhor negócio (pontuação)": lambda a: -(a["pontuacao"] if a["pontuacao"] is not None else -1),
     "Maior margem de lucro": lambda a: -(a["margem"] if a["margem"] is not None else -10**9),
     "Maior desconto face ao mercado": lambda a: -(a["desconto"] if a["desconto"] is not None else -10**9),
     "Mais barato": lambda a: a["preco"],
@@ -122,6 +123,8 @@ with st.sidebar:
                               round((1 - BASE["desconto_mercado"]) * 100))
     f["comparaveis"] = st.slider("Anúncios comparáveis mínimos", 3, 30, BASE["min_comparaveis"],
                                  help="Mais anúncios = valor de mercado mais fiável")
+    f["pontuacao"] = st.slider("Pontuação mínima", 0, 100, BASE["pontuacao_minima"],
+                               help="Avaliação 0-100: preço vs mercado, km, descrição, donos, garantia, extras")
     f["excluir"] = st.toggle("Esconder peças, avariados e sinistrados", True)
 
 
@@ -155,15 +158,21 @@ def candidatos(limite=3000):
 
 
 def analisar(anuncio, db):
-    mediana, n = m.mercado(db, anuncio, f["comparaveis"])
-    if n < f["comparaveis"]:
-        return {**anuncio, "mediana": None, "n": n, "margem": None, "desconto": None, "bom": False,
-                "suspeito": False}
-    margem = mediana - anuncio["preco"] - f["custos"]
-    desconto = round((1 - anuncio["preco"] / mediana) * 100)
-    return {**anuncio, "mediana": round(mediana), "n": n, "margem": round(margem), "desconto": desconto,
-            "bom": margem >= f["margem"] and desconto >= f["desconto"],
-            "suspeito": anuncio["preco"] < mediana * BASE["limite_burla"]}
+    info = m.comparar(db, anuncio, f["comparaveis"])
+    sinais = m.av.carregar(anuncio.get("sinais")) or m.av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])
+    extras = m.av.carregar(anuncio.get("extras"))
+    if info["mediana"] is None:
+        return {**anuncio, "mediana": None, "n": info["n"], "margem": None, "desconto": None, "bom": False,
+                "suspeito": False, "pontuacao": None, "fortes": [], "alertas": []}
+    mediana = info["mediana"]
+    analise = {"mediana": round(mediana), "n": info["n"], "km_mediano": info["km_mediano"],
+               "margem": round(mediana - anuncio["preco"] - f["custos"]),
+               "desconto": round((1 - anuncio["preco"] / mediana) * 100),
+               "suspeito": anuncio["preco"] < mediana * BASE["limite_burla"]}
+    pontuacao, fortes, alertas = m.av.pontuar(anuncio, analise, sinais, extras)
+    return {**anuncio, **analise, "pontuacao": pontuacao, "fortes": fortes, "alertas": alertas,
+            "bom": (analise["margem"] >= f["margem"] and analise["desconto"] >= f["desconto"]
+                    and pontuacao >= f["pontuacao"] and not sinais["graves"])}
 
 
 # ---------- cartões ----------
@@ -199,6 +208,13 @@ def cartao(anuncio, chave, favorito=False):
                     anuncio["combustivel"], anuncio["caixa"],
                     (anuncio["local"] or "").split(",")[0] or None, m.NOMES[anuncio["origem"]]]
         st.markdown(f'<p class="detalhes">{" · ".join(d for d in detalhes if d)}</p>', unsafe_allow_html=True)
+        if anuncio.get("pontuacao") is not None:
+            st.markdown(f'<p class="detalhes"><b>Pontuação {anuncio["pontuacao"]}/100</b></p>',
+                        unsafe_allow_html=True)
+            if anuncio["fortes"]:
+                st.caption("A favor: " + ", ".join(anuncio["fortes"][:4]))
+            if anuncio["alertas"]:
+                st.caption("Atenção: " + ", ".join(anuncio["alertas"][:3]))
         a, b = st.columns([3, 2])
         a.link_button("Ver anúncio", anuncio["url"], use_container_width=True)
         db = estado()["db"]

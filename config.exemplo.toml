@@ -17,6 +17,7 @@ apenas_nacionais = false
 # Negócio: valor de mercado = mediana do mesmo modelo, ano ±1 e km parecidos, em todos os sites
 custos_revenda = 500           # inspeção, limpeza, pequenas reparações, anúncio (€)
 margem_minima = 800            # lucro estimado mínimo para alertar (€)
+pontuacao_minima = 60          # avaliação 0-100 (mercado, km, descrição, donos, garantia...)
 desconto_mercado = 0.85        # e preço ≤ 85% do valor de mercado
 min_comparaveis = 6            # anúncios necessários para estimar o valor
 limite_burla = 0.5             # < 50% do mercado → alerta com aviso

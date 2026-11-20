@@ -11,6 +11,8 @@ import statistics
 import time
 import tomllib
 import unicodedata
+
+import avaliacao as av
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -270,6 +272,33 @@ def autopt(pagina):
     yield from found.values()
 
 
+def detalhe(anuncio):
+    """Lê a página do anúncio (descrição completa e características) para avaliar a fundo."""
+    try:
+        if anuncio["origem"] == "standvirtual":
+            data = next_data(descarregar(anuncio["url"]))
+            advert = next(o for o in walk(data) if isinstance(o, dict) and "parametersDict" in o and "title" in o)
+            anuncio["texto"] = re.sub(r"<[^>]+>", " ", advert.get("description") or "") or anuncio["texto"]
+            anuncio["extras"] = av.extras_standvirtual(advert)
+            if anuncio["extras"].get("importado") is not None:
+                anuncio["importado"] = anuncio["extras"]["importado"]
+        elif anuncio["origem"] == "autopt":
+            completar_autopt(anuncio)
+    except (RuntimeError, StopIteration, KeyError, ValueError):
+        pass  # sem detalhe, avalia com o que a lista trouxe
+    anuncio["sinais"] = av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])
+    anuncio.setdefault("extras", {})
+    return anuncio
+
+
+def candidato(db, anuncio, config):
+    """Passa no mercado/margem, antes de olhar à descrição? (decide se vale ler a página)."""
+    if anuncio["origem"] == "autopt" and anuncio["km"] is None:
+        return config["preco_min"] <= anuncio["preco"] <= config["preco_max"]
+    neutro = {"graves": [], "leves": [], "bons": [], "tem_descricao": True}
+    return avaliar(db, {**anuncio, "sinais": neutro}, {**config, "pontuacao_minima": 0}) is not None
+
+
 def completar_autopt(anuncio):
     """A lista do auto.pt não traz km/ano: lê o anúncio só para candidatos."""
     page = descarregar(anuncio["url"])
@@ -371,33 +400,50 @@ def dentro_dos_limites(anuncio, config):
 
 
 def mercado(db, anuncio, minimo=1):
-    """Valor de mercado: mediana do mesmo modelo, ano ±1 e, se houver amostra, km parecidos."""
+    info = comparar(db, anuncio, minimo)
+    return info["mediana"], info["n"]
+
+
+def comparar(db, anuncio, minimo=1):
+    """Valor de mercado: mediana do mesmo modelo, ano ±1 e km parecidos (+ km mediano)."""
+    vazio = {"mediana": None, "n": 0, "km_mediano": None}
     if not (anuncio.get("modelo") and anuncio["ano"]):
-        return None, 0
-    base = ("SELECT preco FROM anuncios WHERE modelo = ? AND ano BETWEEN ? AND ? "
+        return vazio
+    base = ("SELECT preco, km FROM anuncios WHERE modelo = ? AND ano BETWEEN ? AND ? "
             "AND NOT (origem = ? AND id = ?) AND preco >= 300")
     args = [anuncio["modelo"], anuncio["ano"] - 1, anuncio["ano"] + 1, anuncio["origem"], anuncio["id"]]
     if anuncio["km"]:  # só compara com km parecidos: sem amostra não há estimativa (melhor que um valor errado)
         margem_km = max(30000, anuncio["km"] * 0.35)
         base += " AND km BETWEEN ? AND ?"
         args += [anuncio["km"] - margem_km, anuncio["km"] + margem_km]
-    prices = [r[0] for r in db.execute(base, args)]
-    return (statistics.median(prices) if len(prices) >= minimo else None), len(prices)
+    rows = db.execute(base, args).fetchall()
+    if not rows or len(rows) < minimo:
+        return {**vazio, "n": len(rows)}
+    kms = [r[1] for r in rows if r[1]]
+    return {"mediana": statistics.median(r[0] for r in rows), "n": len(rows),
+            "km_mediano": statistics.median(kms) if kms else None}
 
 
 def avaliar(db, anuncio, config):
     """Análise do negócio, ou None se não passar os filtros/margem."""
     if not (interessa(anuncio, config) and dentro_dos_limites(anuncio, config)):
         return None
-    mediana, n = mercado(db, anuncio, config["min_comparaveis"])
-    if n < config["min_comparaveis"]:
+    info = comparar(db, anuncio, config["min_comparaveis"])
+    if info["mediana"] is None:
         return None
-    ratio = anuncio["preco"] / mediana
-    margem = mediana - anuncio["preco"] - config["custos_revenda"]
+    ratio = anuncio["preco"] / info["mediana"]
+    margem = info["mediana"] - anuncio["preco"] - config["custos_revenda"]
     if ratio > config["desconto_mercado"] or margem < config["margem_minima"]:
         return None
-    return {"mediana": round(mediana), "n": n, "desconto": round((1 - ratio) * 100),
-            "margem": round(margem), "suspeito": ratio < config["limite_burla"]}
+    analise = {"mediana": round(info["mediana"]), "n": info["n"], "km_mediano": info["km_mediano"],
+               "desconto": round((1 - ratio) * 100), "margem": round(margem),
+               "suspeito": ratio < config["limite_burla"]}
+    sinais = anuncio.get("sinais") or av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])
+    analise["pontuacao"], analise["fortes"], analise["alertas"] = av.pontuar(
+        anuncio, analise, sinais, anuncio.get("extras"))
+    if sinais["graves"] or analise["pontuacao"] < config["pontuacao_minima"]:
+        return None
+    return analise
 
 
 def duplicado(db, anuncio):
@@ -430,12 +476,17 @@ def mensagem(anuncio, analise, old_price):
     if anuncio["local"]:
         header += f" · {anuncio['local'][:60]}"
     lines = [header, anuncio["titulo"][:150], " · ".join(facts),
+             f"Pontuação {analise['pontuacao']}/100",
              f"Margem estimada: +{euros(analise['margem'])}",
              f"Mercado ~{euros(analise['mediana'])} ({analise['n']} anúncios) · {analise['desconto']}% abaixo"]
     if old_price:
         lines.append(f"Baixou de {euros(old_price)}")
     if anuncio["avaliacao_site"]:
         lines.append(f"{NOMES[anuncio['origem']]}: {anuncio['avaliacao_site']}")
+    if analise.get("fortes"):
+        lines.append("A favor: " + ", ".join(analise["fortes"][:5]))
+    if analise.get("alertas"):
+        lines.append("Atenção: " + ", ".join(analise["alertas"][:4]))
     if analise["suspeito"]:
         lines.append("ATENÇÃO: muito abaixo do mercado. Confirma documentos e não pagues sinal antes de ver o carro.")
     return "\n".join(lines + [anuncio["url"]])
@@ -452,9 +503,8 @@ def processar(db, anuncio, config, referencia):
     dropped = old_price and anuncio["preco"] <= old_price * (1 - config["descida_minima"])
     alert = None
     if not referencia and (row is None or dropped) and interessa(anuncio, config):
-        if (anuncio["origem"] == "autopt" and anuncio["km"] is None
-                and config["preco_min"] <= anuncio["preco"] <= config["preco_max"]):
-            completar_autopt(anuncio)
+        if candidato(db, anuncio, config):
+            detalhe(anuncio)  # só os candidatos: lê a página completa
             anuncio["modelo"] = modelo_de(anuncio["titulo"])
         analise = avaliar(db, anuncio, config)
         if analise and not duplicado(db, anuncio):
@@ -464,14 +514,18 @@ def processar(db, anuncio, config, referencia):
     with db:
         db.execute(
             "INSERT INTO anuncios (origem, id, modelo, preco, ano, km, alertado, visto_em, titulo, url, local, "
-            "foto, combustivel, caixa, profissional, importado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "foto, combustivel, caixa, profissional, importado, sinais, extras) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (origem, id) DO UPDATE SET preco = excluded.preco, modelo = excluded.modelo, "
             "ano = coalesce(excluded.ano, ano), km = coalesce(excluded.km, km), "
-            "alertado = max(alertado, excluded.alertado), foto = coalesce(excluded.foto, foto)",
+            "alertado = max(alertado, excluded.alertado), foto = coalesce(excluded.foto, foto), "
+            "sinais = excluded.sinais, extras = coalesce(excluded.extras, extras)",
             (anuncio["origem"], anuncio["id"], anuncio["modelo"], anuncio["preco"], anuncio["ano"], anuncio["km"],
              int(alert is not None), datetime.now(UTC).isoformat(), anuncio["titulo"], anuncio["url"],
              anuncio["local"], anuncio["foto"], anuncio["combustivel"], anuncio["caixa"],
-             anuncio["profissional"], anuncio["importado"]))
+             anuncio["profissional"], anuncio["importado"],
+             json.dumps(anuncio.get("sinais") or av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])),
+             json.dumps(anuncio["extras"]) if anuncio.get("extras") else None))
     return row is not None and not anuncio["destaque"]
 
 
@@ -563,7 +617,7 @@ PADROES = {
     "intervalo_segundos": 60, "paginas_max": 5, "paginas_semente": 15, "paginas_exploracao": 3,
     "preco_min": 300, "preco_max": 15000, "ano_min": 2005, "km_max": 250000, "km_ano_max": 20000,
     "desconto_mercado": 0.85, "limite_burla": 0.5, "min_comparaveis": 6, "descida_minima": 0.05,
-    "margem_minima": 800, "custos_revenda": 500,
+    "margem_minima": 800, "custos_revenda": 500, "pontuacao_minima": 60,
     "apenas_nacionais": False, "modelos": [], "excluir": [], "excluir_texto": [],
     "fontes": ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"],
     "facebook_cidades": ["lisbon"], "facebook_pesquisas": ["carro"],
@@ -598,7 +652,7 @@ def abrir_db(path, **opcoes):
                "km INTEGER, alertado INTEGER DEFAULT 0, visto_em TEXT, titulo TEXT, url TEXT, local TEXT, "
                "PRIMARY KEY (origem, id))")
     colunas = {row[1] for row in db.execute("PRAGMA table_info(anuncios)")}
-    for coluna in ("modelo", "foto", "combustivel", "caixa", "profissional", "importado"):
+    for coluna in ("modelo", "foto", "combustivel", "caixa", "profissional", "importado", "sinais", "extras"):
         if coluna not in colunas:
             db.execute(f"ALTER TABLE anuncios ADD COLUMN {coluna}")
     db.execute("CREATE INDEX IF NOT EXISTS anuncios_modelo ON anuncios (modelo, ano)")
