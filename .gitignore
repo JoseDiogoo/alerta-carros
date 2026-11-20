@@ -1,0 +1,11 @@
+config.toml
+*.sqlite3*
+__pycache__/
+.streamlit/secrets.toml
+.playwright-mcp/
+*.png
+# versão antiga baseada no Apify (substituída por monitor.py + app.py)
+nuvem.py
+test_nuvem.py
+pagina.py
+.github/

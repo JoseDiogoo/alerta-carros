@@ -1,0 +1,87 @@
+# Alerta Carros — o que conta como "bom e barato".
+# Cada [[regras]] pode sobrepor preco_min, preco_max, preco_sem_referencia, ano_min, km_max e km_ano_max.
+
+intervalo_segundos = 60        # pausa entre ciclos (mínimo 30)
+paginas_max = 5                # páginas lidas por site até encontrar um anúncio já visto
+
+# Limites gerais
+preco_min = 1000               # abaixo disto são quase sempre sinais, peças ou burlas
+preco_max = 8000
+ano_min = 2008
+km_max = 200000
+km_ano_max = 15000             # média de km por ano de idade
+apenas_nacionais = false       # true = ignora importados (OLX e Standvirtual indicam a origem)
+
+# Preço face ao mercado (mediana de anúncios do mesmo modelo, ano ±1, em todas as fontes)
+desconto_mercado = 0.85        # alerta só se o preço for ≤ 85% da mediana
+limite_burla = 0.5             # < 50% da mediana → alerta com aviso de possível burla
+min_comparaveis = 8            # anúncios necessários para haver mediana
+preco_sem_referencia = 5000    # sem mediana, só alerta abaixo deste preço
+descida_minima = 0.05          # anúncio já visto que baixe ≥ 5% volta a ser avaliado
+
+fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]
+facebook_cidades = ["lisbon", "porto"]
+facebook_cada_minutos = 10
+facebook_faixas = 2            # o Facebook só devolve 24 por pesquisa: divide o preço em faixas
+
+# Palavras no título que excluem o anúncio
+excluir = [
+  "para peças", "peças", "avariado", "sinistrado", "batido", "motor partido",
+  "acidentado", "danificado", "damaged", "salvado",
+  "retoma", "sinal", "entrada", "prestação", "prestações", "mensalidade", "aluguer",
+  "troco", "procuro", "compro",
+]
+# Palavras procuradas também na descrição (avarias e documentos)
+excluir_texto = [
+  "para peças", "avariado", "motor partido", "sinistrado", "sem documentos",
+  "sem matricula", "matricula estrangeira", "não anda", "precisa de motor",
+]
+
+# Modelos com boa fama de fiabilidade e peças baratas. Troca pelos que te interessam.
+[[regras]]
+nome = "Toyota Yaris"
+termos = ["yaris"]
+
+[[regras]]
+nome = "Toyota Auris"
+termos = ["auris"]
+
+[[regras]]
+nome = "Toyota Corolla"
+termos = ["corolla"]
+
+[[regras]]
+nome = "Honda Jazz"
+termos = ["jazz"]
+
+[[regras]]
+nome = "Honda Civic"
+termos = ["civic"]
+
+[[regras]]
+nome = "Mazda 2"
+termos = ["mazda 2"]
+
+[[regras]]
+nome = "Mazda 3"
+termos = ["mazda 3"]
+
+[[regras]]
+nome = "Renault Clio"
+termos = ["clio"]
+
+[[regras]]
+nome = "Volkswagen Golf"
+termos = ["golf"]
+
+[[regras]]
+nome = "Skoda Fabia"
+termos = ["fabia"]
+
+[[regras]]
+nome = "Kia Ceed"
+termos = ["ceed"]
+
+[[regras]]
+nome = "Hyundai i20"
+termos = ["i20"]
