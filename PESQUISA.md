@@ -39,3 +39,9 @@ URLs ordenados pelos mais recentes:
 - BoPeng/ai-marketplace-monitor: pontuação dos negócios
 - carmolim/olx-monitor: alertas de descida de preço
 - XD-MHLOO/facebook-gql-scraper: plano B para o Facebook com cookies
+
+## Atualização (21/11/2026): Facebook
+
+- A pesquisa por texto (`/marketplace/<cidade>/search/?query=carro`) passou a redirecionar para o login, mesmo a partir de casa.
+- A categoria de veículos (`/marketplace/<cidade>/vehicles/?minPrice=…&maxPrice=…&sortBy=creation_time_descend&daysSinceListed=1`) continua aberta sem login a partir de casa: são 24 anúncios por pedido, nas 7 cidades. Ignora a pesquisa por texto e traz também motas e acessórios.
+- A partir dos servidores do GitHub Actions, a mesma página redireciona para o login. É um bloqueio por IP.

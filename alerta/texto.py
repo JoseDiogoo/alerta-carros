@@ -1,0 +1,162 @@
+"""Texto dos anúncios: normalização, números, modelo, combustível e motor."""
+
+import math
+import re
+import unicodedata
+
+
+def words(value):
+    normalized = unicodedata.normalize("NFKD", str(value).casefold())
+    return " ".join(re.findall(r"[a-z0-9]+", "".join(
+        char for char in normalized if not unicodedata.combining(char))))
+
+
+def walk(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for value in obj.values():
+            yield from walk(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from walk(value)
+
+
+def inteiro(value):
+    try:
+        number = float(re.sub(r"[\s ]", "", str(value)).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return int(number) if 0 < number < math.inf else None
+
+
+def ano_do_texto(texto):
+    match = re.search(r"\b(19[89]\d|20[0-3]\d)\b", texto or "")
+    return int(match.group()) if match else None
+
+
+def km_do_texto(texto):
+    # "158 mil kms", "158.000 km", "158000km"
+    match = re.search(r"\b(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*(mil|k)?\s*(?:km|kms|quil[oó]metros)\b",
+                      (texto or "").casefold())
+    if not match:
+        return None
+    value = int(re.sub(r"\D", "", match.group(1))) * (1000 if match.group(2) else 1)
+    return value if 1000 <= value < 1_000_000 else None
+
+
+COMBUSTIVEIS = {"diesel": "Gasóleo", "gasoleo": "Gasóleo", "gasolina": "Gasolina", "petrol": "Gasolina",
+                "gaz": "Gasolina", "gpl": "GPL", "lpg": "GPL", "hibrido": "Híbrido", "hybrid": "Híbrido",
+                "electric": "Elétrico", "eletrico": "Elétrico", "electrico": "Elétrico"}
+
+
+def combustivel(valor):
+    return next((COMBUSTIVEIS[w] for w in words(valor or "").split() if w in COMBUSTIVEIS), None)
+
+
+def caixa(valor):
+    chave = words(valor or "")
+    return "Automática" if "auto" in chave else "Manual" if "manual" in chave else None
+
+
+VERSOES_DESPORTIVAS = {"gti", "gtd", "gte", "r", "rs", "amg", "cupra", "st", "vrs", "type", "abarth", "nismo",
+                       "m3", "m4", "m5", "jcw", "srt", "svr", "gsi", "opc", "ts"}
+
+
+MODELOS_ALIAS = {"corola": "corolla", "yaries": "yaris", "auriss": "auris", "aigo": "aygo", "megan": "megane",
+                 "meganne": "megane", "clio4": "clio", "pugeot": "peugeot", "peujeot": "peugeot", "octava": "octavia",
+                 "ibisa": "ibiza", "fiesa": "fiesta", "corssa": "corsa"}
+
+
+MARCAS_ALIAS_ERROS = {"pugeot": "peugeot", "peujeot": "peugeot", "pegeout": "peugeot", "renaul": "renault",
+                      "reanult": "renault", "renualt": "renault", "renaut": "renault", "renaulto": "renault",
+                      "toyta": "toyota", "toyata": "toyota", "volksvagen": "volkswagen", "volksvagem": "volkswagen",
+                      "wolkswagen": "volkswagen", "ww": "volkswagen", "mercedez": "mercedes-benz",
+                      "susuki": "suzuki", "rouver": "rover", "citreon": "citroen"}
+# Marcas de automóveis: o que não começa por uma delas não é carro (motas, trotinetes, peças, casas...)
+MARCAS_CARRO = set("""abarth aixam alfa-romeo alpine aston audi austin bentley bmw buick byd cadillac chatenet chevrolet
+chrysler citroen cupra dacia daewoo daihatsu datsun dfsk dodge ds ferrari fiat ford genesis honda hummer hyundai
+infiniti isuzu iveco jaecoo jaguar jeep kia lada lamborghini lancia land-rover leapmotor lexus ligier lincoln lotus
+lynk mahindra maserati maxus mazda mclaren mercedes-benz mg microcar mini mitsubishi nissan nio omoda opel peugeot
+polestar pontiac porsche renault rover saab seat simca skoda smart ssangyong subaru suzuki talbot tata tesla toyota
+triumph umm vauxhall volkswagen volvo xpeng""".split())
+
+
+IGNORAR_NO_INICIO = {"vendo", "vende", "se", "venda", "novo", "usado", "carro", "urgente", "oportunidade"}
+
+
+MARCAS_ALIAS = {"vw": "volkswagen", "mercedes": "mercedes-benz", "merc": "mercedes-benz",
+                "alfa": "alfa-romeo", "land": "land-rover", "range": "land-rover"}
+
+
+def modelo_de(titulo):
+    """"2015 VW Golf 1.6 TDI" -> "volkswagen golf". Sem lista fixa: marca + 1.ª palavra do modelo."""
+    # ponytail: heurística pelo título; usar make/model estruturados se aparecerem modelos trocados
+    tokens = [t for t in words(titulo).split() if not re.fullmatch(r"(19|20)\d\d", t)]
+    while tokens and tokens[0] in IGNORAR_NO_INICIO:
+        tokens.pop(0)
+    if len(tokens) < 2:
+        return None
+    marca = MARCAS_ALIAS_ERROS.get(tokens[0], tokens[0])
+    marca, resto = MARCAS_ALIAS.get(marca, marca), tokens[1:]
+    if marca not in MARCAS_CARRO:
+        return None  # não é carro
+    while resto and resto[0] in {"benz", "romeo", "rover"}:
+        resto = resto[1:]
+    if not resto:
+        return None
+    resto = [MODELOS_ALIAS.get(t, t) for t in resto]  # erros de escrita frequentes
+    serie_bmw = re.fullmatch(r"([1-8])\d\d[a-z]*", resto[0]) if marca == "bmw" else None
+    if serie_bmw:  # "BMW 320d" = "BMW Série 3"
+        modelo = f"bmw serie {serie_bmw.group(1)}"
+    elif resto[0] in {"classe", "class"} and len(resto) > 1:  # "Classe A 180" = "A 180"
+        modelo = f"{marca} {resto[1]}"
+    elif resto[0] in {"model", "serie", "series", "grand", "range"} and len(resto) > 1:
+        modelo = f"{marca} {'serie' if resto[0] == 'series' else resto[0]} {resto[1]}"
+    else:
+        modelo = f"{marca} {resto[0]}"
+    # "R-Line", "ST-Line", "AMG Line" são acabamentos, não versões desportivas
+    desportiva = next((t for i, t in enumerate(resto[1:], 1) if t in VERSOES_DESPORTIVAS
+                       and resto[i + 1:i + 2] != ["line"]), None)
+    return f"{modelo} {desportiva}" if desportiva else modelo
+
+
+def cilindrada_do_texto(texto):
+    """"1.5 dCi" -> 1500 cc."""
+    match = re.search(r"(?<![\d.,])([0-6])[.,](\d)(?![\d.,])", texto or "")
+    return int(match.group(1)) * 1000 + int(match.group(2)) * 100 if match else None
+
+
+def potencia_do_texto(texto):
+    """"110 cv" / "150cv" / "90 hp" -> cavalos."""
+    match = re.search(r"\b(\d{2,3})\s*(?:cv|hp|ps|ch)\b", (texto or "").casefold())
+    return int(match.group(1)) if match and 40 <= int(match.group(1)) <= 800 else None
+
+
+DIESEL = {"tdi", "dci", "cdi", "hdi", "crdi", "jtd", "jtdm", "tdci", "cdti", "dtec", "d4d", "multijet", "bluehdi",
+          "ehdi", "tddi", "crd", "sdi", "dti", "idtec", "dtc", "tdv6", "sd4", "td4", "ed4"}
+
+
+GASOLINA = {"tsi", "tfsi", "vvt", "vvti", "vti", "tce", "mpi", "fsi", "ecoboost", "puretech", "thp", "tjet", "gti",
+            "skyactiv", "vtec", "16v", "turbo"}
+
+
+def combustivel_do_titulo(titulo):
+    """"1.6 TDI" / "320d" -> Gasóleo; "1.0 TSI" / "318i" -> Gasolina."""
+    tokens = words(titulo).split()
+    if explicito := combustivel(titulo):
+        return explicito
+    if any(t in DIESEL or re.fullmatch(r"\d{3}d", t) for t in tokens):
+        return "Gasóleo"
+    if any(t in GASOLINA or re.fullmatch(r"\d{3}i", t) for t in tokens):
+        return "Gasolina"
+    return None
+
+
+def km_da_faixa(valor):
+    """CustoJusto dá os km por faixa ("190 000 - 199 999"): usa o meio."""
+    numeros = [int(re.sub(r"\D", "", n)) for n in re.findall(r"\d[\d\s .]*\d|\d", str(valor or ""))]
+    return round(sum(numeros) / len(numeros)) if numeros and 0 < max(numeros) < 1_000_000 else None
+
+
+def euros(valor):
+    return f"{int(valor):,} €".replace(",", " ")

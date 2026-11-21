@@ -24,6 +24,10 @@ limite_burla = 0.5             # < 50% do mercado → alerta com aviso
 limite_irreal = 0.35           # < 35% do mercado → ignorado (burla, erro no preço ou prestação)
 descida_minima = 0.05          # anúncio já visto que baixe ≥ 5% volta a ser avaliado
 
+# Regras da base de dados (para não crescer sem fim)
+retencao_dias = 60             # anúncio que não aparece nos sites há 60 dias (vendido/retirado) sai; favoritos ficam
+preco_max_guardar = 15000      # acima disto nem se guarda: não serve de comparação para carros até preco_max
+
 # Telegram: só os melhores negócios (o painel mostra todos os carros dentro dos filtros)
 desconto_telegram = 0.30       # preço pelo menos 30% abaixo do valor de mercado
 desconto_foco = 0.15           # nas marcas_foco (Toyota) basta 15% abaixo

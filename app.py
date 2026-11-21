@@ -8,7 +8,15 @@ from html import escape
 import pandas as pd
 import streamlit as st
 
-import monitor as m
+from alerta import avaliacao as av
+from alerta.anuncio import NOMES, carro, completar_motor
+from alerta.config import ROOT, load_config
+from alerta.db import abrir_db, limpar
+from alerta.fontes import facebook, olx, standvirtual
+from alerta.mercado import analisar as analisar_mercado
+from alerta.negocio import excluido, melhor
+from alerta.texto import euros, modelo_de, words
+from alerta.vigia import processar, semear, vigiar
 
 st.set_page_config(page_title="Alerta Carros", layout="wide")
 st.markdown("""
@@ -34,38 +42,39 @@ st.markdown("""
   div[data-testid="stStatusWidget"] {visibility: hidden}
 </style>""", unsafe_allow_html=True)
 
-CONFIG_PATH = m.ROOT / "config.toml"
+CONFIG_PATH = ROOT / "config.toml"
 if not CONFIG_PATH.is_file():
-    CONFIG_PATH = m.ROOT / "config.exemplo.toml"
-BASE = m.load_config(CONFIG_PATH)
+    CONFIG_PATH = ROOT / "config.exemplo.toml"
+BASE = load_config(CONFIG_PATH)
 FONTES = BASE["fontes"]
 ATUALIZAR_SEGUNDOS = 15
 SEM_FOTO = "https://placehold.co/640x480/1f2937/9ca3af?text=Sem+foto"
 COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto", "modelo", "combustivel",
            "caixa", "profissional", "importado", "sinais", "extras", "cilindrada", "potencia", "carrocaria"]
-CAMINHO_DB = m.ROOT / "painel.sqlite3"
+CAMINHO_DB = ROOT / "painel.sqlite3"
 
 
 # ---------- recolha em segundo plano, partilhada por todas as sessões ----------
 
 def recolha_continua(s):
     """Junta o mercado e depois lê todos os sites em paralelo, sem parar (sem alertas: isso é o monitor)."""
-    db = m.abrir_db(CAMINHO_DB)
-    m.semear(db, {**BASE, "paginas_semente": 8}, aviso=lambda *_: None)
+    db = abrir_db(CAMINHO_DB)
+    semear(db, {**BASE, "paginas_semente": 8}, aviso=lambda *_: None)
     db.close()
     s["semeado"] = True
     for origem in [*FONTES, "mercado"]:
-        threading.Thread(target=m.vigiar, args=(origem, CAMINHO_DB, BASE, threading.Event()),
+        threading.Thread(target=vigiar, args=(origem, CAMINHO_DB, BASE, threading.Event()),
                          kwargs={"so_guardar": True, "erros": s["erros"]}, daemon=True).start()
 
 
 @st.cache_resource
 def estado():
-    esquema = 4  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
-    db = m.abrir_db(CAMINHO_DB, check_same_thread=False)
+    esquema = 5  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
+    db = abrir_db(CAMINHO_DB, check_same_thread=False)
     db.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
                "guardado_em TEXT, PRIMARY KEY (origem, id))")
     db.commit()
+    limpar(db, BASE)
     s = {"db": db, "erros": {}, "semeado": False}
     threading.Thread(target=recolha_continua, args=(s,), daemon=True).start()
     return s
@@ -114,7 +123,7 @@ with st.sidebar:
                                       placeholder="Todos")
     f["caixa"] = st.multiselect("Caixa", ["Manual", "Automática"], placeholder="Todas")
     f["vendedor"] = st.radio("Vendedor", ["Todos", "Particular", "Profissional"], horizontal=True)
-    f["sites"] = st.multiselect("Sites", FONTES, format_func=m.NOMES.get,
+    f["sites"] = st.multiselect("Sites", FONTES, format_func=NOMES.get,
                                 placeholder="Todos")
     f["local"] = st.text_input("Zona", placeholder="ex.: Lisboa, Porto, Braga")
     f["nacionais"] = st.checkbox("Só carros nacionais", BASE["apenas_nacionais"])
@@ -157,21 +166,40 @@ def candidatos(limite=3000, marca=None):
     args.append(limite)
     regras = {**BASE, "excluir": BASE["excluir"] if f["excluir"] else [],
               "excluir_texto": BASE["excluir_texto"] if f["excluir"] else []}
-    anuncios = (m.carro(**dict(zip(COLUNAS, r))) for r in estado()["db"].execute(" ".join(sql), args))
+    anuncios = (carro(**dict(zip(COLUNAS, r))) for r in estado()["db"].execute(" ".join(sql), args))
     unicos = {}  # o mesmo carro publicado em vários sites aparece uma vez
     for a in anuncios:
-        if not m.excluido(a, regras):
+        if not excluido(a, regras):
             unicos.setdefault((a["modelo"], a["ano"], a["km"] or (a["origem"], a["id"]), a["preco"]), a)
     return list(unicos.values())
 
 
+CACHE_ANALISE_SEGUNDOS = 60  # o mercado muda devagar; o painel redesenha-se de 15 em 15 s
+
+
+@st.cache_resource
+def cache_analises():
+    """Avaliações partilhadas por todos os separadores e visitantes: (anúncio, custos) -> (quando, resultado)."""
+    return {}
+
+
 def analisar(anuncio, db):
     """A mesma avaliação do monitor (alertas do Telegram), com os custos e comparáveis do painel."""
-    anuncio = {**anuncio, "sinais": m.av.carregar(anuncio.get("sinais")) or None,
-               "extras": m.av.carregar(anuncio.get("extras"))}
-    m.completar_motor(anuncio)
-    analise = m.analisar(db, anuncio, {**BASE, "custos_revenda": f["custos"], "min_comparaveis": f["comparaveis"]})
-    return {**anuncio, **analise, "bom": m.melhor(anuncio, analise, BASE)}  # bom = iria para o Telegram
+    cache = cache_analises()
+    chave = (anuncio["origem"], anuncio["id"], anuncio["preco"], anuncio["km"], anuncio["ano"],
+             f["custos"], f["comparaveis"])
+    guardado = cache.get(chave)
+    if guardado and time.monotonic() - guardado[0] < CACHE_ANALISE_SEGUNDOS:
+        return guardado[1]
+    anuncio = {**anuncio, "sinais": av.carregar(anuncio.get("sinais")) or None,
+               "extras": av.carregar(anuncio.get("extras"))}
+    completar_motor(anuncio)
+    analise = analisar_mercado(db, anuncio, {**BASE, "custos_revenda": f["custos"], "min_comparaveis": f["comparaveis"]})
+    resultado = {**anuncio, **analise, "bom": melhor(anuncio, analise, BASE)}  # bom = iria para o Telegram
+    if len(cache) > 50000:
+        cache.clear()
+    cache[chave] = (time.monotonic(), resultado)
+    return resultado
 
 
 def analisados(marca=None):
@@ -184,7 +212,6 @@ def analisados(marca=None):
 
 # ---------- cartões ----------
 
-euros = m.euros
 
 
 def cartao(anuncio, chave, favorito=False):
@@ -223,7 +250,7 @@ def cartao(anuncio, chave, favorito=False):
                     f"{anuncio['cilindrada'] / 1000:.1f}" if anuncio.get("cilindrada") else None,
                     f"{anuncio['potencia']} cv" if anuncio.get("potencia") else None,
                     anuncio["combustivel"], anuncio["caixa"],
-                    (anuncio["local"] or "").split(",")[0] or None, m.NOMES[anuncio["origem"]]]
+                    (anuncio["local"] or "").split(",")[0] or None, NOMES[anuncio["origem"]]]
         st.markdown(f'<p class="detalhes">{escape(" · ".join(d for d in detalhes if d))}</p>',
                     unsafe_allow_html=True)
         if anuncio.get("pontuacao") is not None:
@@ -283,10 +310,10 @@ def painel():
     b.metric("Nos filtros", len(todos))
     c.metric("Melhores (Telegram)", sum(1 for x in todos if x["bom"]),
              help="Cumprem o critério do Telegram: muito abaixo de um valor de mercado fiável")
-    ultimo = s["db"].execute("SELECT MAX(visto_em) FROM anuncios").fetchone()[0]
+    ultimo = s["db"].execute("SELECT MAX(atualizado_em) FROM anuncios").fetchone()[0]
     d.metric("Último anúncio lido", datetime.fromisoformat(ultimo).astimezone().strftime("%H:%M:%S") if ultimo else "—")
     for origem, erro in list(s["erros"].items()):
-        st.warning(f"{m.NOMES.get(origem, 'Mercado')}: {erro}")
+        st.warning(f"{NOMES.get(origem, 'Mercado')}: {erro}")
     o1, o2, o3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem")
     quantos = o2.selectbox("Mostrar", [24, 48, 96, 200], key="quantos")
@@ -334,7 +361,7 @@ def lista_favoritos():
     if not rows:
         st.info("Ainda sem favoritos. Carrega em \"Guardar\" num carro para o guardares aqui.")
         return
-    anuncios = [{**analisar(m.carro(**dict(zip(COLUNAS, r[:-1]))), db), "guardado": r[-1]} for r in rows]
+    anuncios = [{**analisar(carro(**dict(zip(COLUNAS, r[:-1]))), db), "guardado": r[-1]} for r in rows]
     baixaram = [x for x in anuncios if x["preco"] < x["guardado"]]
     a, b, c = st.columns(3)
     a.metric("Favoritos", len(anuncios))
@@ -412,9 +439,9 @@ with mercado_tab:
 @st.cache_data(ttl=600, show_spinner=False)
 def pesquisar(termo, caminho_sv):
     anuncios, erros = [], []
-    fontes = [("OLX", lambda p: m.olx(p, termo))]
+    fontes = [("OLX", lambda p: olx(p, termo))]
     if caminho_sv:
-        fontes.append(("Standvirtual", lambda p: m.standvirtual(p, caminho_sv)))
+        fontes.append(("Standvirtual", lambda p: standvirtual(p, caminho_sv)))
     for nome, buscar in fontes:
         try:
             for pagina in (1, 2, 3):
@@ -423,7 +450,7 @@ def pesquisar(termo, caminho_sv):
             erros.append(f"{nome}: {erro}")
     for cidade in BASE["facebook_cidades"]:
         try:
-            anuncios += list(m.facebook(cidade, 500, 200000, termo=termo))
+            anuncios += list(facebook(cidade, 500, 200000, termo=termo))
         except RuntimeError as erro:
             erros.append(f"Facebook ({cidade}): {erro}")
     return anuncios, erros
@@ -436,7 +463,7 @@ with procura:
     if c2.button("Pesquisar", type="primary", width="stretch") and texto.strip():
         st.session_state["pesquisa"] = texto.strip()
     if st.session_state.get("pesquisa"):
-        partes = m.words(st.session_state["pesquisa"]).split()
+        partes = words(st.session_state["pesquisa"]).split()
         caminho = f"{partes[0]}/{'-'.join(partes[1:])}" if len(partes) > 1 else ""
         with st.spinner("A ler os sites…"):
             lidos, erros = pesquisar(" ".join(partes), caminho)
@@ -444,8 +471,8 @@ with procura:
             st.warning(erro)
         db = estado()["db"]
         for anuncio in lidos:
-            m.processar(db, dict(anuncio), BASE, referencia=True)  # enriquece o mercado
-        resultado = {a["url"]: analisar({**a, "modelo": m.modelo_de(a["titulo"])}, db) for a in lidos if a["preco"]}
+            processar(db, dict(anuncio), BASE, referencia=True)  # enriquece o mercado
+        resultado = {a["url"]: analisar({**a, "modelo": modelo_de(a["titulo"])}, db) for a in lidos if a["preco"]}
         resultado = sorted(resultado.values(), key=lambda x: -(x["margem"] if x["margem"] is not None else -10**9))
         st.caption(f"{len(lidos)} anúncios lidos · {sum(1 for x in resultado if x['bom'])} negócios")
         grelha(resultado[:24], "pesq")

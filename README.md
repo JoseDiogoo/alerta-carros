@@ -26,9 +26,30 @@ O painel mostra **todos** os carros dentro dos filtros (até 5 000 €). O Teleg
 
 ## Ficheiros
 
-- `monitor.py` corre no PC, vigia os 6 sites e envia os bons negócios para o Telegram, com foto, preço, motor, km, margem, avarias mencionadas, valor de mercado e link. Também lê aos poucos páginas mais antigas, sobretudo até ao dobro do preço máximo e das marcas em foco, para conhecer o mercado.
+O código está no pacote `alerta/`, organizado por camadas (de dentro para fora):
+
+| Módulo | O que faz |
+|---|---|
+| `alerta/texto.py`, `alerta/anuncio.py` | Dados de um anúncio: normalização, km, ano, marca e modelo (só marcas de automóveis), motor. Sem rede nem base. |
+| `alerta/avaliacao.py` | Lê a descrição (avarias, pontos fortes) e dá a pontuação 0-100. |
+| `alerta/mercado.py` | Valor de mercado a partir de carros iguais, com os preços ajustados a ano e km. |
+| `alerta/negocio.py` | Filtros do utilizador e critério do Telegram. |
+| `alerta/fontes/` | Um módulo por site (`standvirtual`, `olx`, `custojusto`, `autopt`, `autox`, `facebook`) e o pedido HTTP. |
+| `alerta/db.py` | Base SQLite: esquema, gravação e regras de limpeza. |
+| `alerta/telegram.py` | Envio e texto das mensagens. |
+| `alerta/vigia.py` | Junta tudo: lê cada site ao seu ritmo, guarda, avalia e alerta. |
+| `alerta/config.py` | `config.toml` e segredos. |
+
+- `monitor.py` é a linha de comandos: vigia os 6 sites e envia os bons negócios para o Telegram, com foto, preço, motor, km, margem, avarias mencionadas, valor de mercado e link.
 - `app.py` é o painel Streamlit com os separadores **Melhores negócios** (todos os carros, ordenados pela pontuação, com a opção de ver só os do critério do Telegram), **Toyota** (prontos a vender e com avaria), **Favoritos**, **Mercado** e **Pesquisar modelo**. Atualiza-se a cada 15 segundos, com a recolha a correr em segundo plano.
 - `config.toml` guarda os critérios. Se não existir, é usado o `config.exemplo.toml`. `modelos = []` significa todos os carros. `desconto_telegram`, `desconto_foco`, `comparaveis_telegram` e `pontuacao_minima` definem o critério do Telegram.
+
+## Regras da base de dados
+
+- Só se guardam **carros** (marca de automóvel reconhecida) **até 15 000 €** (`preco_max_guardar`). Acima disso, um anúncio nunca serve de comparação para um carro até 5 000 €.
+- Um anúncio que **não aparece nos sites há 60 dias** (`retencao_dias`) é apagado, porque já foi vendido ou retirado. Os favoritos nunca são apagados.
+- A limpeza corre no arranque e de 6 em 6 horas. Quando apaga mais de 1 000 anúncios, a base é compactada.
+- Há índices para os comparáveis (`modelo, ano`), para os mais recentes (`visto_em`) e para a limpeza (`atualizado_em`).
 
 Os pormenores técnicos de cada fonte estão em [PESQUISA.md](PESQUISA.md).
 
@@ -58,7 +79,7 @@ Na primeira execução, o monitor guarda os anúncios existentes como referênci
 
 ## Alertas 24/7 na nuvem (com o PC desligado)
 
-O workflow do GitHub Actions (`.github/workflows/alertas.yml`) vigia os sites de 15 em 15 segundos durante cerca de 5h40 (`python monitor.py --minutos 340`). No fim, guarda o mercado aprendido na cache e relança-se a si próprio, sem precisar de token. Se a cadeia se quebrar, o agendamento de hora a hora retoma-a. O repositório é público, por isso os minutos do GitHub Actions são ilimitados. O Facebook bloqueia os servidores do GitHub e só funciona no PC.
+O workflow do GitHub Actions (`.github/workflows/alertas.yml`) vigia os sites de 15 em 15 segundos durante cerca de 5h40 (`python monitor.py --minutos 340`). No fim, guarda o mercado aprendido na cache e relança-se a si próprio, sem precisar de token. Se a cadeia se quebrar, o agendamento de hora a hora retoma-a. O repositório é público, por isso os minutos do GitHub Actions são ilimitados. O Facebook é lido pela categoria de veículos, sem login, mas bloqueia os servidores do GitHub (redireciona para o login). Na nuvem fica de fora, e só funciona a partir de uma ligação de casa.
 
 Para parar os alertas: GitHub → Actions → "Alertas de carros" → "Disable workflow".
 
@@ -68,6 +89,7 @@ Se o monitor também estiver a correr no PC ao mesmo tempo, o mesmo carro pode d
 
 ```powershell
 python -B -m unittest test_monitor -v
+python -m pyflakes monitor.py app.py alerta/   # verificação estática (pip install pyflakes)
 ```
 
 ## Aviso

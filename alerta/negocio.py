@@ -1,0 +1,67 @@
+"""Regras de negócio: filtros do utilizador e critério dos alertas (Telegram)."""
+
+from datetime import datetime
+
+from .mercado import analisar
+from .texto import words
+
+
+def interessa(anuncio, config):
+    """Filtros do utilizador (config.toml ou painel). Lista de modelos vazia = todos os carros."""
+    if not anuncio.get("modelo") or excluido(anuncio, config):
+        return False
+    modelos = [words(m) for m in config["modelos"]]
+    return not modelos or anuncio["modelo"].replace("-", " ") in [m.replace("-", " ") for m in modelos] \
+        or any(f" {m} " in f" {words(anuncio['titulo'])} " for m in modelos)
+
+
+def excluido(anuncio, config):
+    title = f" {words(anuncio['titulo'])} "
+    text = f" {words(anuncio['titulo'] + ' ' + anuncio['texto'])} "
+    return (any(f" {words(term)} " in title for term in config["excluir"])
+            or any(f" {words(term)} " in text for term in config["excluir_texto"]))
+
+
+def dentro_dos_limites(anuncio, config):
+    price, km, year = anuncio["preco"], anuncio["km"], anuncio["ano"]
+    if not config["preco_min"] <= price <= config["preco_max"]:
+        return False
+    if year and year < config["ano_min"]:
+        return False
+    if km and km > config["km_max"]:
+        return False
+    if km and year and km / max(1, datetime.now().year - year) > config["km_ano_max"]:
+        return False
+    return not (config["apenas_nacionais"] and anuncio["importado"])
+
+
+def candidato(db, anuncio, config):
+    """Passa no mercado/margem, antes de olhar à descrição? (decide se vale ler a página)."""
+    if anuncio["origem"] == "autopt" and anuncio["km"] is None:
+        return config["preco_min"] <= anuncio["preco"] <= config["preco_max"]
+    neutro = {"graves": [], "leves": [], "bons": [], "tem_descricao": True}
+    return avaliar(db, {**anuncio, "sinais": neutro}, {**config, "pontuacao_minima": 0}) is not None
+
+
+def avaliar(db, anuncio, config):
+    """Análise, se o carro for dos melhores negócios (vai para o Telegram); senão None."""
+    if not (interessa(anuncio, config) and dentro_dos_limites(anuncio, config)):
+        return None
+    analise = analisar(db, anuncio, config)
+    return analise if melhor(anuncio, analise, config) else None
+
+
+def de_foco(anuncio, config):
+    """Marca em foco (marcas_foco, ex.: Toyota): critério do Telegram mais solto."""
+    return (anuncio.get("modelo") or "").split(" ")[0] in [words(m) for m in config["marcas_foco"]]
+
+
+def melhor(anuncio, analise, config):
+    """Critério do Telegram: muito abaixo de um valor de mercado fiável e boa pontuação. Avariados contam."""
+    if analise["mediana"] is None or not analise["fiavel"] or analise["irreal"]:  # disperso ou preço irreal
+        return False
+    if analise["avaria"]["inviaveis"]:
+        return False  # peças, problemas legais ou estruturais: não é negócio
+    desconto = config["desconto_foco"] if de_foco(anuncio, config) else config["desconto_telegram"]
+    return (analise["ratio"] <= 1 - desconto and analise["n"] >= config["comparaveis_telegram"]
+            and analise["pontuacao"] >= config["pontuacao_minima"])

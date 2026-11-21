@@ -2,8 +2,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import monitor
-from monitor import abrir_db, carro, ciclo_paginado, km_do_texto, load_config, modelo_de
+from alerta import avaliacao as av
+from alerta import texto, vigia
+from alerta.anuncio import carro
+from alerta.config import load_config
+from alerta.db import abrir_db, limpar, vale_guardar
+from alerta.fontes import PAGINADAS
+from alerta.negocio import melhor
+from alerta.texto import km_do_texto, modelo_de
+from alerta.vigia import ciclo_paginado
 
 EXEMPLO = Path(__file__).with_name("config.exemplo.toml")
 
@@ -19,7 +26,7 @@ class MonitorTest(unittest.TestCase):
         self.config = load_config(EXEMPLO)
         self.config["marcas_foco"] = []  # sem pedidos reais aos sites nos testes
         self.paginas = {}
-        patcher = patch.dict(monitor.PAGINADAS, {
+        patcher = patch.dict(PAGINADAS, {
             origem: (lambda pagina, origem=origem: iter(self.paginas.get((origem, pagina), [])))
             for origem in ("olx", "standvirtual")})
         patcher.start()
@@ -27,7 +34,7 @@ class MonitorTest(unittest.TestCase):
 
     def ciclo(self, origem="olx", **paginas):
         self.paginas = {(origem, int(k[1:])): v for k, v in paginas.items()}
-        with patch("monitor.send") as send:
+        with patch("alerta.vigia.send") as send:
             ciclo_paginado(self.db, origem, self.config)
         return [call.args[0] for call in send.call_args_list]
 
@@ -72,7 +79,6 @@ class MonitorTest(unittest.TestCase):
         self.assertIn("motor avariado", alertas[1])
 
     def test_avaria_e_criterio_toyota(self):
-        av = monitor.av
         r = av.avaria(av.sinais_do_texto("Yaris", "Avariado, não pega. Embraiagem a patinar. Pneus gastos."))
         self.assertEqual(r["itens"], ["embraiagem a patinar"])  # o genérico só conta se nada for concreto
         r = av.avaria(av.sinais_do_texto("Yaris", "Está avariado."))
@@ -88,22 +94,33 @@ class MonitorTest(unittest.TestCase):
         analise = {"mediana": 6000, "fiavel": True, "irreal": False, "avaria": {"inviaveis": []},
                    "ratio": 0.8, "n": 12, "pontuacao": 80}
         config = {**self.config, "marcas_foco": ["toyota"]}
-        self.assertTrue(monitor.melhor({"modelo": "toyota yaris"}, analise, config))
-        self.assertFalse(monitor.melhor({"modelo": "renault clio"}, analise, config))
-        self.assertFalse(monitor.melhor({"modelo": "toyota yaris"}, {**analise, "n": 8}, config))
-        self.assertEqual(monitor.combustivel_do_titulo("BMW 320d Touring"), "Gasóleo")
-        self.assertEqual(monitor.combustivel_do_titulo("VW Golf 1.0 TSI"), "Gasolina")
-        self.assertEqual(monitor.cilindrada_do_texto("Renault Clio 1.5 dCi 90cv"), 1500)
-        self.assertEqual(monitor.potencia_do_texto("Renault Clio 1.5 dCi 90cv"), 90)
-        self.assertEqual(monitor.km_da_faixa("190 000 - 199 999"), 195000)
+        self.assertTrue(melhor({"modelo": "toyota yaris"}, analise, config))
+        self.assertFalse(melhor({"modelo": "renault clio"}, analise, config))
+        self.assertFalse(melhor({"modelo": "toyota yaris"}, {**analise, "n": 8}, config))
+        self.assertEqual(texto.combustivel_do_titulo("BMW 320d Touring"), "Gasóleo")
+        self.assertEqual(texto.combustivel_do_titulo("VW Golf 1.0 TSI"), "Gasolina")
+        self.assertEqual(texto.cilindrada_do_texto("Renault Clio 1.5 dCi 90cv"), 1500)
+        self.assertEqual(texto.potencia_do_texto("Renault Clio 1.5 dCi 90cv"), 90)
+        self.assertEqual(texto.km_da_faixa("190 000 - 199 999"), 195000)
 
     def test_explorar_sobrevive_a_site_mudado(self):
         def partido(pagina, **_):
             raise KeyError("listing")
         avisos = []
-        with patch.dict(monitor.PAGINADAS, {"olx": partido, "standvirtual": partido, "custojusto": partido}):
-            monitor.explorar(self.db, self.config, aviso=avisos.append)
+        with patch.dict(PAGINADAS, {"olx": partido, "standvirtual": partido, "custojusto": partido}):
+            vigia.explorar(self.db, self.config, aviso=avisos.append)
         self.assertEqual(len(avisos), 3)
+
+    def test_regras_da_base(self):
+        self.assertFalse(vale_guardar({"modelo": None, "preco": 1000}, self.config))  # trotinete, mota...
+        self.assertFalse(vale_guardar({"modelo": "bmw serie 5", "preco": 30000}, self.config))
+        self.assertTrue(vale_guardar({"modelo": "toyota yaris", "preco": 6000}, self.config))
+        self.ciclo(p1=[yaris("velho", 6000), yaris("novo", 6100), yaris("caro", 30000),
+                       carro("olx", "trotinete", "Trotinete elétrica", 200, "https://exemplo/t")])
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM anuncios").fetchone()[0], 2)  # caro e trotinete fora
+        self.db.execute("UPDATE anuncios SET atualizado_em = '2000-01-01' WHERE id = 'velho'")
+        self.assertEqual(limpar(self.db, self.config), 1)  # não visto há mais de 60 dias
+        self.assertEqual([r[0] for r in self.db.execute("SELECT id FROM anuncios")], ["novo"])
 
     def test_fluxo_completo(self):
         # 1.º ciclo: referência inicial (mercado do Yaris 2012 ≈ 6000 €), sem alertas
@@ -143,15 +160,15 @@ class MonitorTest(unittest.TestCase):
     def test_pagina_ate_encontrar_conhecido(self):
         self.ciclo(p1=[yaris("a", 6000)])
         lidas = []
-        original = monitor.PAGINADAS["olx"]
-        with patch.dict(monitor.PAGINADAS, {"olx": lambda p: lidas.append(p) or original(p)}):
+        original = PAGINADAS["olx"]
+        with patch.dict(PAGINADAS, {"olx": lambda p: lidas.append(p) or original(p)}):
             self.ciclo(p1=[yaris("b", 6000)], p2=[yaris("c", 6000), yaris("a", 6000)], p3=[yaris("d", 6000)])
         self.assertEqual(lidas, [1, 2])
 
     def test_telegram_falha_e_repete(self):
         self.ciclo(p1=[yaris(f"m{i}", 6000 + i * 10) for i in range(10)])
         self.paginas = {("olx", 1): [yaris("novo", 4000)]}
-        with patch("monitor.send", side_effect=RuntimeError("Telegram em baixo")):
+        with patch("alerta.vigia.send", side_effect=RuntimeError("Telegram em baixo")):
             with self.assertRaises(RuntimeError):
                 ciclo_paginado(self.db, "olx", self.config)
         self.assertEqual(len(self.ciclo(p1=[yaris("novo", 4000)])), 1)
