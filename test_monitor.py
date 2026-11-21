@@ -31,7 +31,7 @@ class MonitorTest(unittest.TestCase):
         self.paginas = {}
         patcher = patch.dict(PAGINADAS, {
             origem: (lambda pagina, origem=origem: iter(self.paginas.get((origem, pagina), [])))
-            for origem in ("olx", "standvirtual")})
+            for origem in ("olx", "standvirtual", "custojusto", "autopt", "autox")})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -122,6 +122,23 @@ class MonitorTest(unittest.TestCase):
         with patch.dict(PAGINADAS, {"olx": partido, "standvirtual": partido, "custojusto": partido}):
             vigia.explorar(self.db, self.config, aviso=avisos.append)
         self.assertEqual(len(avisos), 3)
+
+    def test_todos_os_sites_chegam_ao_telegram(self):
+        # mercado do Yaris com marca/modelo do site (Standvirtual), como na realidade
+        self.ciclo("standvirtual", p1=[yaris(f"m{i}", 6000 + i * 10, origem="standvirtual") for i in range(12)])
+        for origem, extra in (("standvirtual", {}), ("olx", {}),
+                              ("custojusto", {"marca": None, "modelo_site": None}),  # só título: catálogo
+                              ("autopt", {"marca": "Toyota", "modelo_site": "Yaris"}),
+                              ("autox", {"marca": "Toyota", "modelo_site": "Yaris 1.0 VVT-i"})):
+            self.ciclo(origem, p1=[yaris(f"{origem}-ref", 6000, origem=origem, **extra)])  # 1.ª leitura = referência
+            barato = yaris(f"{origem}-barato", 3900, origem=origem, km=119000 + len(origem), **extra)
+            with patch("alerta.fontes.detalhe", side_effect=lambda a: a),                  patch("alerta.vigia.detalhe", side_effect=lambda a: a):  # sem pedidos reais
+                alertas = self.ciclo(origem, p1=[barato])
+            self.assertEqual(len(alertas), 1, f"{origem}: {alertas}")
+        # um carro com modelo por confirmar não alerta, mas fica na base (aparece no painel)
+        self.assertEqual(self.ciclo("custojusto", p1=[carro("custojusto", "vago", "Carro de 2012 em bom estado", 900,
+                                                          "u", ano=2012, km=100000)]), [])
+        self.assertIsNotNone(self.db.execute("SELECT 1 FROM anuncios WHERE id = 'vago'").fetchone())
 
     def test_regras_da_base(self):
         self.assertFalse(vale_guardar({"modelo": None, "preco": 1000, "origem": "facebook"}, self.config))
