@@ -81,7 +81,9 @@ Na primeira execução, o monitor guarda os anúncios existentes como referênci
 
 ## Alertas 24/7 na nuvem (com o PC desligado)
 
-O workflow do GitHub Actions (`.github/workflows/alertas.yml`) vigia os sites de 15 em 15 segundos durante cerca de 5h40 (`python monitor.py --minutos 340`). No fim, guarda o mercado aprendido na cache e relança-se a si próprio, sem precisar de token. Se a cadeia se quebrar, o agendamento de hora a hora retoma-a. O repositório é público, por isso os minutos do GitHub Actions são ilimitados. O Facebook é lido pela categoria de veículos, sem login, mas bloqueia os servidores do GitHub (redireciona para o login). Na nuvem fica de fora, e só funciona a partir de uma ligação de casa.
+O workflow do GitHub Actions (`.github/workflows/alertas.yml`) vigia os sites de 15 em 15 segundos durante cerca de 5h40 (`python monitor.py --minutos 340`). No fim, guarda o mercado aprendido na cache e relança-se a si próprio, sem precisar de token. Se a cadeia se quebrar, o agendamento de hora a hora retoma-a. O repositório é público, por isso os minutos do GitHub Actions são ilimitados.
+
+Para contornar o bloqueio por IP de datacenter imposto pelo Facebook nos servidores do GitHub, o workflow instala e ativa automaticamente o **Cloudflare WARP (grátis)** antes de iniciar a vigia. Assim, o tráfego de saída passa pela rede da Cloudflare, permitindo ler a categoria de veículos do Facebook Marketplace (sem login) 24/7 na nuvem, juntamente com o Standvirtual, OLX, CustoJusto, Auto.pt e AutoX.
 
 Para parar os alertas: GitHub → Actions → "Alertas de carros" → "Disable workflow".
 

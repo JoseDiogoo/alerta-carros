@@ -44,4 +44,4 @@ URLs ordenados pelos mais recentes:
 
 - A pesquisa por texto (`/marketplace/<cidade>/search/?query=carro`) passou a redirecionar para o login, mesmo a partir de casa.
 - A categoria de veículos (`/marketplace/<cidade>/vehicles/?minPrice=…&maxPrice=…&sortBy=creation_time_descend&daysSinceListed=1`) continua aberta sem login a partir de casa: são 24 anúncios por pedido, nas 7 cidades. Ignora a pesquisa por texto e traz também motas e acessórios.
-- A partir dos servidores do GitHub Actions, a mesma página redireciona para o login. É um bloqueio por IP.
+- A partir dos servidores do GitHub Actions, a mesma página redirecionava para o login devido a bloqueio de IP de datacenter. Com a instalação do **Cloudflare WARP (grátis)** no workflow do GitHub Actions, o IP de saída é alterado para a rede Cloudflare, contornando o bloqueio e permitindo a vigia sem ter o PC ligado.
