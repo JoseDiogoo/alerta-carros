@@ -35,9 +35,8 @@ max_alertas_todos = 40         # máximo desses alertas por cada 30 min
 
 fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]
 facebook_cidades = ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"]
-facebook_pesquisas = ["carro"] # usado quando a lista de modelos está vazia
 facebook_cada_minutos = 3
-facebook_faixas = 3            # o Facebook devolve 24 por pesquisa: divide o preço em faixas
+facebook_faixas = 3            # o Facebook devolve 24 por página de veículos: divide o preço em faixas
 
 # Carros com avaria NÃO são excluídos: aparecem com a etiqueta AVARIA (sem estimar o custo).
 # Palavras no título que excluem o anúncio (só o que não se resolve com uma reparação)

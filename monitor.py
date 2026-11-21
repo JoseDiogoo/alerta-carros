@@ -467,10 +467,24 @@ def autox(pagina):
                         foto=photo and photo.group())
 
 
-def facebook(termo, cidade, preco_min, preco_max):
-    query = urlencode({"query": termo, "minPrice": preco_min, "maxPrice": preco_max,
-                       "daysSinceListed": 1, "exact": "false"})
-    page = descarregar(f"https://www.facebook.com/marketplace/{quote(cidade)}/search/?{query}")
+def facebook(cidade, preco_min, preco_max, termo=None):
+    """Categoria de veículos do Marketplace: abre sem login (a pesquisa por texto passou a pedir login).
+
+    Traz também motas e acessórios: o que não é um modelo de carro é descartado depois. termo: filtra
+    os títulos (a categoria ignora a pesquisa por texto).
+    """
+    query = urlencode({"minPrice": preco_min, "maxPrice": preco_max, "sortBy": "creation_time_descend",
+                       "daysSinceListed": 1})
+    url = f"https://www.facebook.com/marketplace/{quote(cidade)}/vehicles/?{query}"
+    try:
+        with urlopen(Request(url, headers=HEADERS), timeout=20) as response:
+            if "/login" in response.geturl():  # sem isto o bloqueio passava por "0 anúncios"
+                raise RuntimeError("www.facebook.com: pede login (bloqueado)")
+            page = response.read().decode("utf-8", "replace")
+    except HTTPError as error:
+        raise RuntimeError(f"www.facebook.com: HTTP {error.code}") from None
+    except (URLError, OSError):
+        raise RuntimeError("www.facebook.com: falha de ligação") from None
     found = {}
     for block in re.findall(r'<script type="application/json"[^>]*>(.*?)</script>', page, re.S):
         try:
@@ -490,6 +504,9 @@ def facebook(termo, cidade, preco_min, preco_max):
                 km=km_do_texto(f"{title} {subtitles}"), ano=ano_do_texto(title),
                 local=((item.get("location") or {}).get("reverse_geocode") or {}).get("city") or "",
                 foto=(((item.get("primary_listing_photo") or {}).get("image")) or {}).get("uri"))
+    if termo:
+        palavras = words(termo).split()
+        found = {k: a for k, a in found.items() if all(w in words(a["titulo"]).split() for w in palavras)}
     yield from found.values()
 
 
@@ -852,15 +869,13 @@ def faixas(config):
 def ciclo_facebook(db, config, so_guardar=False):
     referencia = so_guardar or fonte_vazia(db, "facebook")
     total = 0
-    pesquisas = config["modelos"] or config["facebook_pesquisas"]
-    for termo in pesquisas:
-        for cidade in config["facebook_cidades"]:
-            for low, high in faixas(config):
-                anuncios = list(facebook(termo, cidade, low, high))
-                total += len(anuncios)
-                for anuncio in anuncios:
-                    processar(db, anuncio, config, referencia)
-                time.sleep(1)
+    for cidade in config["facebook_cidades"]:
+        for low, high in faixas(config):
+            anuncios = list(facebook(cidade, low, high))
+            total += len(anuncios)
+            for anuncio in anuncios:
+                processar(db, anuncio, config, referencia)
+            time.sleep(1)
     return total, referencia
 
 
@@ -942,7 +957,7 @@ PADROES = {
     "marcas_foco": ["toyota"], "pontuacao_minima": 75, "alertar_todos": False, "max_alertas_todos": 40,
     "apenas_nacionais": False, "modelos": [], "excluir": [], "excluir_texto": [],
     "fontes": ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"],
-    "facebook_cidades": ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"], "facebook_pesquisas": ["carro"],
+    "facebook_cidades": ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"],
     "facebook_cada_minutos": 3, "facebook_faixas": 3,
 }
 

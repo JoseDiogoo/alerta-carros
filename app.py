@@ -423,7 +423,7 @@ def pesquisar(termo, caminho_sv):
             erros.append(f"{nome}: {erro}")
     for cidade in BASE["facebook_cidades"]:
         try:
-            anuncios += list(m.facebook(termo, cidade, 500, 200000))
+            anuncios += list(m.facebook(cidade, 500, 200000, termo=termo))
         except RuntimeError as erro:
             erros.append(f"Facebook ({cidade}): {erro}")
     return anuncios, erros
