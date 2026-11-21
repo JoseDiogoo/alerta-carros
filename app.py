@@ -26,7 +26,8 @@ st.markdown("""
   .hero h1 span {color: #e3242b}
   .hero p {color: #a3a3a3; margin: .2rem 0 1rem}
   .marca {font-weight: 700; color: #fff; margin: .5rem 0 0}
-  .titulo {color: #a3a3a3; font-size: .85rem; height: 2.5em; overflow: hidden; margin: 0 0 .3rem}
+  .titulo {color: #a3a3a3; font-size: .85rem; line-height: 1.25em; height: 2.5em; overflow: hidden; margin: 0 0 .3rem;
+           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical}
   .preco {font-size: 1.5rem; font-weight: 800; margin: 0; color: #e3242b}
   .mercado {color: #a3a3a3; font-size: .8rem; margin: 0}
   .margem {color: #22c55e; font-weight: 700; margin: .1rem 0 .3rem}
@@ -41,6 +42,20 @@ st.markdown("""
   /* sem ecrã cinzento enquanto procura */
   [data-stale="true"], .stale-element {opacity: 1 !important; transition: none !important}
   div[data-testid="stStatusWidget"] {visibility: hidden}
+  /* telemóvel: números 2×2, botões lado a lado, margens pequenas */
+  @media (max-width: 640px) {
+    .block-container {padding: 3rem .75rem 2rem !important}
+    .hero h1 {font-size: 1.8rem}
+    .hero p {font-size: .85rem}
+    [class*="st-key-metricas"] [data-testid="stHorizontalBlock"],
+    [class*="st-key-botoes"] [data-testid="stHorizontalBlock"] {flex-wrap: wrap !important; flex-direction: row !important;
+                                                                 gap: .5rem !important}
+    [class*="st-key-metricas"] [data-testid="stColumn"] {min-width: calc(50% - .5rem) !important;
+                                                          flex: 1 1 calc(50% - .5rem) !important}
+    [class*="st-key-botoes"] [data-testid="stColumn"] {min-width: 0 !important; flex: 1 1 0 !important}
+    [data-testid="stMetricValue"] {font-size: 1.4rem !important}
+    [data-testid="stTabs"] button {padding: 0 .4rem !important}
+  }
 </style>""", unsafe_allow_html=True)
 
 CONFIG_PATH = ROOT / "config.toml"
@@ -288,7 +303,7 @@ def cartao(anuncio, chave, favorito=False):
                 st.caption("Atenção: " + ", ".join(anuncio["alertas"][:3]))
         if anuncio["avaria"]["tem"] and anuncio["margem"] is not None:
             st.caption("🔧 Margem sem contar a reparação: confirmar o custo com um mecânico.")
-        a, b = st.columns([3, 2])
+        a, b = st.container(key=f"botoes-{chave}").columns([3, 2])
         a.link_button("Ver anúncio", anuncio["url"], width="stretch")
         db = estado()["db"]
         if favorito:
@@ -330,7 +345,7 @@ def painel():
         st.info("Primeira vez: a conhecer o mercado nos 6 sites (cerca de 1 minuto). A página atualiza sozinha.")
     todos = analisados()
 
-    a, b, c, d = st.columns(4)
+    a, b, c, d = st.container(key="metricas-geral").columns(4)
     total = s["db"].execute("SELECT COUNT(*) FROM anuncios").fetchone()[0]
     a.metric("Carros conhecidos", f"{total:,}".replace(",", " "))
     b.metric("Nos filtros", len(todos))
@@ -418,7 +433,7 @@ def painel_toyota():
     toyotas = sorted(analisados(marca="toyota"), key=ORDENS["Melhor negócio (pontuação)"])
     prontos = [t for t in toyotas if not t["avaria"]["tem"]]
     com_avaria = [t for t in toyotas if t["avaria"]["tem"]]
-    a, b, c, d = st.columns(4)
+    a, b, c, d = st.container(key="metricas-toyota").columns(4)
     a.metric("Toyotas nos filtros", len(toyotas))
     b.metric("Prontos a vender", len(prontos))
     c.metric("Com avaria", len(com_avaria))
