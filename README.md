@@ -39,7 +39,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Alertas no Telegram (24/7 no PC)
+## Alertas no Telegram (no PC, opcional)
 
 O bot é o @alerta_carros_pt_bot e o grupo é "Alerta Carros". Os segredos ficam em `.streamlit/secrets.toml`, que não vai para o Git:
 
@@ -53,11 +53,16 @@ python monitor.py --test-telegram   # a mensagem de teste deve chegar ao grupo
 .\iniciar_monitor.bat               # vigia sem parar e reinicia sozinho se cair
 ```
 
-Para arrancar com o Windows, põe um atalho para o `iniciar_monitor.bat` na pasta que abre com `Win+R` → `shell:startup`. Nas opções de energia, desliga a suspensão do PC.
 
 Na primeira execução, o monitor guarda os anúncios existentes como referência e não envia nada. A partir daí, cada anúncio novo, ou cada descida de preço de pelo menos 5%, que cumpra os critérios dá um alerta. Se o envio falhar, o anúncio volta a ser tentado no ciclo seguinte. O mesmo carro publicado em dois sites só gera um alerta. Se um site bloquear ou falhar, o monitor espera cada vez mais tempo antes de lá voltar (até 10 minutos), sem afetar os outros sites.
 
-O workflow do GitHub Actions (`.github/workflows/alertas.yml`) corre de 30 em 30 minutos, com uma base de dados própria. Se o monitor estiver a correr no PC ao mesmo tempo, o mesmo carro pode dar dois alertas.
+## Alertas 24/7 na nuvem (com o PC desligado)
+
+O workflow do GitHub Actions (`.github/workflows/alertas.yml`) vigia os sites de 15 em 15 segundos durante cerca de 5h40 (`python monitor.py --minutos 340`). No fim, guarda o mercado aprendido na cache e relança-se a si próprio, sem precisar de token. Se a cadeia se quebrar, o agendamento de hora a hora retoma-a. O repositório é público, por isso os minutos do GitHub Actions são ilimitados. O Facebook bloqueia os servidores do GitHub e só funciona no PC.
+
+Para parar os alertas: GitHub → Actions → "Alertas de carros" → "Disable workflow".
+
+Se o monitor também estiver a correr no PC ao mesmo tempo, o mesmo carro pode dar dois alertas.
 
 ## Testes
 

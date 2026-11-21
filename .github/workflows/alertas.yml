@@ -1,22 +1,25 @@
 name: Alertas de carros
 
-# Corre na nuvem do GitHub de 30 em 30 minutos (cabe nos 2000 min/mês grátis de um repositório privado).
+# Corre na nuvem do GitHub sem parar, com o PC desligado: cada execução vigia os sites de 15 em 15 s
+# durante ~5h40 e no fim relança-se a si própria. O agendamento de hora a hora é só a reserva,
+# caso a cadeia se quebre. Repositório público: minutos do GitHub Actions ilimitados.
 on:
   schedule:
-    - cron: "7,37 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: write  # para se relançar no fim (gh workflow run)
 
 concurrency:
   group: alertas-carros
-  cancel-in-progress: false
+  cancel-in-progress: false  # há sempre uma só vigia; as outras ficam à espera
 
 jobs:
   alertar:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,17 +32,15 @@ jobs:
           key: estado-${{ github.run_id }}
           restore-keys: estado-
 
-      - name: Configuração da nuvem (exploração curta)
+      - name: Configuração da nuvem
         run: |
-          sed -e 's/^fontes = .*/fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]/' \
-              -e 's/^paginas_exploracao = .*/paginas_exploracao = 2/' \
-              config.exemplo.toml > config.toml
+          sed -e 's/^paginas_exploracao = .*/paginas_exploracao = 2/' config.exemplo.toml > config.toml
 
-      - name: Procurar negócios e enviar alertas
+      - name: Vigiar os sites e enviar alertas (~5h40)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: "-5586087955"
-        run: python3 monitor.py --once
+        run: python3 monitor.py --minutos 340
 
       - name: Guardar o mercado aprendido
         if: always()
@@ -47,6 +48,12 @@ jobs:
         with:
           path: config.sqlite3
           key: estado-${{ github.run_id }}
+
+      - name: Relançar a vigia
+        # só se correu bem: um erro não fica em ciclo; o agendamento de hora a hora retoma
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run alertas.yml --repo "${{ github.repository }}" --ref main
 
       - name: Manter a app Streamlit acordada
         if: always()

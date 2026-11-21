@@ -998,6 +998,7 @@ def main():
     mode.add_argument("--once", action="store_true")
     mode.add_argument("--chat-id", action="store_true")
     mode.add_argument("--test-telegram", action="store_true")
+    parser.add_argument("--minutos", type=float, help="vigia só durante N minutos (GitHub Actions) e sai")
     args = parser.parse_args()
     if args.chat_id:
         updates = telegram("getUpdates", timeout=5, allowed_updates=["message"])
@@ -1037,7 +1038,7 @@ def main():
         db.close()  # fecha o WAL: a cache do GitHub guarda só o .sqlite3
         return int(failed)
     db.close()
-    vigiar_tudo(caminho, config)
+    vigiar_tudo(caminho, config, args.minutos)
     return 0
 
 
@@ -1076,9 +1077,12 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
         # com erros (bloqueio, site em baixo) espera cada vez mais, até 10 min, para não piorar
         espera = min(600, intervalo * 2 ** min(falhas, 6)) if falhas else intervalo
         parar.wait(max(1.0, espera - (time.monotonic() - inicio)))
+    db.close()
 
 
-def vigiar_tudo(caminho, config):
+def vigiar_tudo(caminho, config, minutos=None):
+    """Vigia todas as fontes em paralelo. minutos: pára ao fim desse tempo (GitHub Actions) e fecha a base."""
+    fim = time.monotonic() + minutos * 60 if minutos else None
     parar = threading.Event()
     threads = [threading.Thread(target=vigiar, args=(origem, caminho, config, parar), daemon=True, name=origem)
                for origem in [*config["fontes"], "mercado"]]
@@ -1088,12 +1092,18 @@ def vigiar_tudo(caminho, config):
           f"(de {config['intervalo_segundos']} em {config['intervalo_segundos']} s; "
           f"Facebook de {config['facebook_cada_minutos']} em {config['facebook_cada_minutos']} min).", flush=True)
     try:
-        while True:
-            parar.wait(1800)
+        while fim is None or time.monotonic() < fim:
+            parar.wait(1800 if fim is None else min(1800, max(1, fim - time.monotonic())))
             with ALERTA:
                 ENVIADOS_TODOS[0] = 0  # max_alertas_todos vale por cada 30 min
     finally:
         parar.set()
+        for thread in threads:
+            thread.join(timeout=180)  # cada fonte acaba o ciclo em curso
+        db = sqlite3.connect(caminho, timeout=60)
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # tudo no .sqlite3: é esse o ficheiro guardado na cache
+        db.close()
+        print(f"{datetime.now():%H:%M:%S} Fim da vigia.", flush=True)
 
 
 if __name__ == "__main__":
