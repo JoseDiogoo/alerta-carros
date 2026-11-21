@@ -14,7 +14,8 @@ def carro(origem, id, titulo, preco, url, **extra):
     return {"origem": origem, "id": str(id), "titulo": (titulo or "").strip(), "preco": preco,
             "url": url, "km": None, "ano": None, "local": "", "profissional": None,
             "importado": None, "avaliacao_site": None, "texto": "", "destaque": False, "foto": None,
-            "combustivel": None, "caixa": None, "cilindrada": None, "potencia": None, "carrocaria": None, **extra}
+            "combustivel": None, "caixa": None, "cilindrada": None, "potencia": None, "carrocaria": None,
+            "marca": None, "modelo_site": None, "modelo": None, "modelo_fonte": None, **extra}
 
 
 def completar_motor(anuncio):

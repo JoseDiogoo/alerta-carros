@@ -46,5 +46,7 @@ def completar_autopt(anuncio):
                            texto=data.get("description") or "",
                            combustivel=combustivel(data.get("fuelType")) or anuncio["combustivel"],
                            caixa=caixa(data.get("vehicleTransmission") or data.get("name")) or anuncio["caixa"],
-                           carrocaria=data.get("bodyType") or anuncio.get("carrocaria"))
+                           carrocaria=data.get("bodyType") or anuncio.get("carrocaria"),
+                           marca=(data.get("brand") or {}).get("name") or anuncio.get("marca"),
+                           modelo_site=data.get("model") or anuncio.get("modelo_site"))
             return

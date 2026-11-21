@@ -5,7 +5,7 @@ import re
 from urllib.parse import quote
 
 from ..anuncio import carro
-from ..texto import caixa, combustivel, inteiro
+from ..texto import caixa, combustivel, inteiro, walk
 from .http import descarregar
 
 
@@ -19,6 +19,9 @@ def olx(pagina, termo=None, preco_max=None):
     if start < 0:
         raise RuntimeError("página sem dados de anúncios (o site mudou?)")
     state = json.loads(json.JSONDecoder().raw_decode(page, page.find('"', start))[0])
+    # a marca é a categoria do anúncio (ex.: 607 = Porsche); a lista de categorias vem na própria página
+    marcas = {c["id"]: c.get("normalizedName") for c in walk(state.get("categories") or {})
+              if isinstance(c, dict) and "id" in c and "normalizedName" in c}
     for ad in state["listing"]["listing"]["ads"]:
         price = (ad.get("price") or {}).get("regularPrice") or {}
         params = {p.get("key"): p.get("normalizedValue") for p in ad.get("params") or []}
@@ -32,4 +35,5 @@ def olx(pagina, termo=None, preco_max=None):
                     foto=re.sub(r";s=\d+x\d+", ";s=640x480", (ad.get("photos") or [""])[0]) or None,
                     combustivel=combustivel(params.get("combustivel")), caixa=caixa(params.get("gearbox")),
                     cilindrada=inteiro(params.get("engine_capacity")), potencia=inteiro(params.get("engine_power")),
-                    carrocaria=params.get("body_type"))
+                    carrocaria=params.get("body_type"),
+                    marca=marcas.get((ad.get("category") or {}).get("id")), modelo_site=params.get("modelo"))

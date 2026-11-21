@@ -7,14 +7,15 @@ import time
 from datetime import datetime
 
 from .anuncio import NOMES, completar_motor
-from .db import abrir_db, duplicado, fonte_vazia, guardar, limpar, vale_guardar
+from .catalogo import identificar
+from .db import abrir_db, duplicado, fonte_vazia, guardar, limpar, reidentificar, vale_guardar
 from .fontes import PAGINADAS, detalhe
 from .fontes.facebook import facebook
 from .fontes.olx import olx
 from .fontes.standvirtual import standvirtual
 from .negocio import avaliar, candidato, interessa
 from .telegram import mensagem, mensagem_simples, send
-from .texto import modelo_de, words
+from .texto import words
 
 
 ENVIADOS_TODOS = [0]
@@ -27,7 +28,7 @@ def processar(db, anuncio, config, referencia):
     """Guarda um anúncio e alerta se for negócio. Devolve True se já era conhecido."""
     if not anuncio["preco"] or not anuncio["titulo"]:
         return False
-    anuncio["modelo"] = modelo_de(anuncio["titulo"])
+    identificar(db, anuncio)  # marca e modelo: campos do site ou catálogo; na dúvida, None
     completar_motor(anuncio)
     row = db.execute("SELECT preco FROM anuncios WHERE origem = ? AND id = ?",
                      (anuncio["origem"], anuncio["id"])).fetchone()
@@ -36,10 +37,15 @@ def processar(db, anuncio, config, referencia):
     conhecido = row is not None and not anuncio["destaque"]
     if not vale_guardar(anuncio, config):
         return conhecido  # não é carro ou é caro de mais para servir de comparação: não ocupa a base
+    lido = False
+    if not referencia and (row is None or dropped) and anuncio["origem"] == "autopt" and not anuncio["modelo"]:
+        detalhe(anuncio)  # a lista do Auto.pt não traz marca nem modelo: estão na página do anúncio
+        identificar(db, anuncio)
+        lido = True
     if not referencia and (row is None or dropped) and interessa(anuncio, config):
-        if candidato(db, anuncio, config):
+        if not lido and candidato(db, anuncio, config):
             detalhe(anuncio)  # só os candidatos: lê a página completa
-            anuncio["modelo"] = modelo_de(anuncio["titulo"])
+            identificar(db, anuncio)
             completar_motor(anuncio)
         analise = avaliar(db, anuncio, config)
         with ALERTA:  # as fontes correm em paralelo: o mesmo carro não pode ser alertado duas vezes
@@ -174,7 +180,7 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
         intervalo = config["intervalo_segundos"] * 4
     else:
         intervalo = config["intervalo_segundos"]
-    falhas, ciclos, limpeza = 0, 0, time.monotonic()
+    falhas, ciclos, limpeza, reidentificado = 0, 0, time.monotonic(), time.monotonic()
     while not parar.is_set():
         inicio = time.monotonic()
         try:
@@ -183,6 +189,9 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
                 if time.monotonic() - limpeza > 6 * 3600:  # regras da base também numa vigia longa (painel)
                     limpar(db, config)
                     limpeza = time.monotonic()
+                elif time.monotonic() - reidentificado > 600:  # o catálogo cresce: dá modelo a quem não tinha
+                    reidentificar(db)
+                    reidentificado = time.monotonic()
             else:
                 total, referencia = (ciclo_facebook(db, config, so_guardar) if origem == "facebook"
                                      else ciclo_paginado(db, origem, config, so_guardar))

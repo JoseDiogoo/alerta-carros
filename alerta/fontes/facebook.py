@@ -39,7 +39,9 @@ def completar_facebook(anuncio):
             texto=(item.get("redacted_description") or {}).get("text") or anuncio["texto"],
             profissional={"PRIVATE_SELLER": False, "DEALER": True}.get(item.get("vehicle_seller_type"),
                                                                          anuncio["profissional"]),
-            extras={**(anuncio.get("extras") or {}), **({"donos": donos} if donos else {})})
+            extras={**(anuncio.get("extras") or {}), **({"donos": donos} if donos else {})},
+            marca=item.get("vehicle_make_display_name") or anuncio.get("marca"),
+            modelo_site=item.get("vehicle_model_display_name") or anuncio.get("modelo_site"))
         return
 
 

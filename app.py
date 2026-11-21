@@ -2,7 +2,7 @@
 
 import threading
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 
 import pandas as pd
@@ -15,7 +15,8 @@ from alerta.db import abrir_db, limpar
 from alerta.fontes import facebook, olx, standvirtual
 from alerta.mercado import analisar as analisar_mercado
 from alerta.negocio import excluido, melhor
-from alerta.texto import euros, modelo_de, words
+from alerta.catalogo import identificar
+from alerta.texto import euros, words
 from alerta.vigia import processar, semear, vigiar
 
 st.set_page_config(page_title="Alerta Carros", layout="wide")
@@ -50,7 +51,8 @@ FONTES = BASE["fontes"]
 ATUALIZAR_SEGUNDOS = 15
 SEM_FOTO = "https://placehold.co/640x480/1f2937/9ca3af?text=Sem+foto"
 COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto", "modelo", "combustivel",
-           "caixa", "profissional", "importado", "sinais", "extras", "cilindrada", "potencia", "carrocaria"]
+           "caixa", "profissional", "importado", "sinais", "extras", "cilindrada", "potencia", "carrocaria",
+           "marca", "modelo_site", "modelo_fonte"]
 CAMINHO_DB = ROOT / "painel.sqlite3"
 
 
@@ -69,7 +71,7 @@ def recolha_continua(s):
 
 @st.cache_resource
 def estado():
-    esquema = 5  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
+    esquema = 6  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
     db = abrir_db(CAMINHO_DB, check_same_thread=False)
     db.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
                "guardado_em TEXT, PRIMARY KEY (origem, id))")
@@ -114,6 +116,11 @@ def modelos_conhecidos():
     return lista("SELECT DISTINCT modelo FROM anuncios WHERE modelo IS NOT NULL ORDER BY modelo")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def marcas_conhecidas():
+    return lista("SELECT DISTINCT marca FROM anuncios WHERE marca IS NOT NULL ORDER BY marca")
+
+
 def com_escolhidos(opcoes, chave):
     """As opções incluem sempre o que já está escolhido (senão a escolha desaparecia)."""
     return sorted(set(opcoes) | set(st.session_state.get(chave) or []))
@@ -128,7 +135,7 @@ with st.sidebar:
     f["ano"] = st.slider("Ano", 1995, ANO_MAX, (entre(BASE["ano_min"], 1995, ANO_MAX), ANO_MAX), key="f_ano")
     f["km"] = st.slider("Km máximos", 10000, 400000, entre(BASE["km_max"], 10000, 400000), 10000, key="f_km")
     todos_modelos = modelos_conhecidos()
-    marcas = st.multiselect("Marca", com_escolhidos({x.split()[0] for x in todos_modelos}, "f_marcas"),
+    marcas = st.multiselect("Marca", com_escolhidos(marcas_conhecidas(), "f_marcas"),
                             format_func=str.title, placeholder="Todas", key="f_marcas")
     modelos = st.multiselect("Modelo", com_escolhidos([x for x in todos_modelos if not marcas
                                                        or x.split()[0] in marcas], "f_modelos"),
@@ -160,7 +167,7 @@ with st.sidebar:
 def candidatos(limite=3000, marca=None):
     """Anúncios que passam os filtros de base (SQL), mais recentes primeiro. marca: só essa marca."""
     marcas_sel, modelos_sel = ([marca], []) if marca else (marcas, modelos)
-    sql = [f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE modelo IS NOT NULL AND preco BETWEEN ? AND ? "
+    sql = [f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE preco BETWEEN ? AND ? "
            "AND (ano IS NULL OR ano BETWEEN ? AND ?) AND (km IS NULL OR km <= ?)"]
     args = [*f["preco"], *f["ano"], f["km"]]
     for coluna, valores in (("modelo", modelos_sel), ("combustivel", f["combustivel"]), ("caixa", f["caixa"]),
@@ -169,8 +176,8 @@ def candidatos(limite=3000, marca=None):
             sql.append(f"AND {coluna} IN ({','.join('?' * len(valores))})")
             args += valores
     if marcas_sel:
-        sql.append("AND (" + " OR ".join("modelo LIKE ?" for _ in marcas_sel) + ")")
-        args += [f"{x} %" for x in marcas_sel]
+        sql.append(f"AND marca IN ({','.join('?' * len(marcas_sel))})")
+        args += marcas_sel
     if f["vendedor"] != "Todos":
         sql.append("AND profissional = ?")
         args.append(int(f["vendedor"] == "Profissional"))
@@ -187,7 +194,8 @@ def candidatos(limite=3000, marca=None):
     unicos = {}  # o mesmo carro publicado em vários sites aparece uma vez
     for a in anuncios:
         if not excluido(a, regras):
-            unicos.setdefault((a["modelo"], a["ano"], a["km"] or (a["origem"], a["id"]), a["preco"]), a)
+            unicos.setdefault((a["modelo"] or (a["origem"], a["id"]), a["ano"], a["km"] or (a["origem"], a["id"]),
+                               a["preco"]), a)
     return list(unicos.values())
 
 
@@ -235,7 +243,8 @@ def cartao(anuncio, chave, favorito=False):
     with st.container(border=True):
         st.image(anuncio["foto"] or SEM_FOTO, width="stretch")
         if anuncio["margem"] is None:
-            selo = '<span class="selo neutro">a recolher dados de mercado</span>'
+            selo = ('<span class="selo neutro">modelo por confirmar</span>' if not anuncio.get("modelo") else
+                    '<span class="selo neutro">a recolher dados de mercado</span>')
         elif anuncio.get("irreal"):
             selo = f'<span class="selo suspeito">{anuncio["desconto"]}% abaixo · preço irreal</span>'
         elif anuncio["suspeito"]:
@@ -331,6 +340,20 @@ def painel():
     d.metric("Último anúncio lido", datetime.fromisoformat(ultimo).astimezone().strftime("%H:%M:%S") if ultimo else "—")
     for origem, erro in list(s["erros"].items()):
         st.warning(f"{NOMES.get(origem, 'Mercado')}: {erro}")
+    with st.expander("Estado dos sites"):
+        st.caption("Cada site lido nas últimas 24 h. Os carros com modelo por confirmar aparecem no painel, mas "
+                   "não entram no valor de mercado nem vão para o Telegram.")
+        desde = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+        por_site = {r[0]: r[1:] for r in s["db"].execute(
+            "SELECT origem, COUNT(*), SUM(modelo IS NOT NULL), MAX(atualizado_em) FROM anuncios "
+            "WHERE atualizado_em >= ? GROUP BY origem", (desde,))}
+        st.dataframe(pd.DataFrame([{
+            "site": NOMES[o], "anúncios (24 h)": por_site.get(o, (0, 0, None))[0],
+            "com modelo certo": por_site.get(o, (0, 0, None))[1] or 0,
+            "última leitura": (datetime.fromisoformat(por_site[o][2]).astimezone().strftime("%d/%m %H:%M")
+                               if o in por_site else "—"),
+            "estado": f"erro: {s['erros'][o]}" if o in s["erros"] else ("ok" if o in por_site else "sem anúncios"),
+        } for o in FONTES]), hide_index=True, width="stretch")
     o1, o2, o3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem")
     quantos = o2.selectbox("Mostrar", [24, 48, 96, 200], key="quantos")
@@ -489,7 +512,7 @@ with procura:
         db = estado()["db"]
         for anuncio in lidos:
             processar(db, dict(anuncio), BASE, referencia=True)  # enriquece o mercado
-        resultado = {a["url"]: analisar({**a, "modelo": modelo_de(a["titulo"])}, db) for a in lidos if a["preco"]}
+        resultado = {a["url"]: analisar(identificar(db, dict(a)), db) for a in lidos if a["preco"]}
         resultado = sorted(resultado.values(), key=lambda x: -(x["margem"] if x["margem"] is not None else -10**9))
         st.caption(f"{len(lidos)} anúncios lidos · {sum(1 for x in resultado if x['bom'])} negócios")
         grelha(resultado[:24], "pesq")

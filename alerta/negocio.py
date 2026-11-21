@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from .mercado import analisar
+from .catalogo import slug
 from .texto import words
 
 
@@ -53,7 +54,8 @@ def avaliar(db, anuncio, config):
 
 def de_foco(anuncio, config):
     """Marca em foco (marcas_foco, ex.: Toyota): critério do Telegram mais solto."""
-    return (anuncio.get("modelo") or "").split(" ")[0] in [words(m) for m in config["marcas_foco"]]
+    marca = anuncio.get("marca") or (anuncio.get("modelo") or "").split(" ")[0]
+    return marca in [slug(m) for m in config["marcas_foco"]]
 
 
 def melhor(anuncio, analise, config):

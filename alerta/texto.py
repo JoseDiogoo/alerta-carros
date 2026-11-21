@@ -58,68 +58,6 @@ def caixa(valor):
     return "Automática" if "auto" in chave else "Manual" if "manual" in chave else None
 
 
-VERSOES_DESPORTIVAS = {"gti", "gtd", "gte", "r", "rs", "amg", "cupra", "st", "vrs", "type", "abarth", "nismo",
-                       "m3", "m4", "m5", "jcw", "srt", "svr", "gsi", "opc", "ts"}
-
-
-MODELOS_ALIAS = {"corola": "corolla", "yaries": "yaris", "auriss": "auris", "aigo": "aygo", "megan": "megane",
-                 "meganne": "megane", "clio4": "clio", "pugeot": "peugeot", "peujeot": "peugeot", "octava": "octavia",
-                 "ibisa": "ibiza", "fiesa": "fiesta", "corssa": "corsa"}
-
-
-MARCAS_ALIAS_ERROS = {"pugeot": "peugeot", "peujeot": "peugeot", "pegeout": "peugeot", "renaul": "renault",
-                      "reanult": "renault", "renualt": "renault", "renaut": "renault", "renaulto": "renault",
-                      "toyta": "toyota", "toyata": "toyota", "volksvagen": "volkswagen", "volksvagem": "volkswagen",
-                      "wolkswagen": "volkswagen", "ww": "volkswagen", "mercedez": "mercedes-benz",
-                      "susuki": "suzuki", "rouver": "rover", "citreon": "citroen"}
-# Marcas de automóveis: o que não começa por uma delas não é carro (motas, trotinetes, peças, casas...)
-MARCAS_CARRO = set("""abarth aixam alfa-romeo alpine aston audi austin bentley bmw buick byd cadillac chatenet chevrolet
-chrysler citroen cupra dacia daewoo daihatsu datsun dfsk dodge ds ferrari fiat ford genesis honda hummer hyundai
-infiniti isuzu iveco jaecoo jaguar jeep kia lada lamborghini lancia land-rover leapmotor lexus ligier lincoln lotus
-lynk mahindra maserati maxus mazda mclaren mercedes-benz mg microcar mini mitsubishi nissan nio omoda opel peugeot
-polestar pontiac porsche renault rover saab seat simca skoda smart ssangyong subaru suzuki talbot tata tesla toyota
-triumph umm vauxhall volkswagen volvo xpeng""".split())
-
-
-IGNORAR_NO_INICIO = {"vendo", "vende", "se", "venda", "novo", "usado", "carro", "urgente", "oportunidade"}
-
-
-MARCAS_ALIAS = {"vw": "volkswagen", "mercedes": "mercedes-benz", "merc": "mercedes-benz",
-                "alfa": "alfa-romeo", "land": "land-rover", "range": "land-rover"}
-
-
-def modelo_de(titulo):
-    """"2015 VW Golf 1.6 TDI" -> "volkswagen golf". Sem lista fixa: marca + 1.ª palavra do modelo."""
-    # ponytail: heurística pelo título; usar make/model estruturados se aparecerem modelos trocados
-    tokens = [t for t in words(titulo).split() if not re.fullmatch(r"(19|20)\d\d", t)]
-    while tokens and tokens[0] in IGNORAR_NO_INICIO:
-        tokens.pop(0)
-    if len(tokens) < 2:
-        return None
-    marca = MARCAS_ALIAS_ERROS.get(tokens[0], tokens[0])
-    marca, resto = MARCAS_ALIAS.get(marca, marca), tokens[1:]
-    if marca not in MARCAS_CARRO:
-        return None  # não é carro
-    while resto and resto[0] in {"benz", "romeo", "rover"}:
-        resto = resto[1:]
-    if not resto:
-        return None
-    resto = [MODELOS_ALIAS.get(t, t) for t in resto]  # erros de escrita frequentes
-    serie_bmw = re.fullmatch(r"([1-8])\d\d[a-z]*", resto[0]) if marca == "bmw" else None
-    if serie_bmw:  # "BMW 320d" = "BMW Série 3"
-        modelo = f"bmw serie {serie_bmw.group(1)}"
-    elif resto[0] in {"classe", "class"} and len(resto) > 1:  # "Classe A 180" = "A 180"
-        modelo = f"{marca} {resto[1]}"
-    elif resto[0] in {"model", "serie", "series", "grand", "range"} and len(resto) > 1:
-        modelo = f"{marca} {'serie' if resto[0] == 'series' else resto[0]} {resto[1]}"
-    else:
-        modelo = f"{marca} {resto[0]}"
-    # "R-Line", "ST-Line", "AMG Line" são acabamentos, não versões desportivas
-    desportiva = next((t for i, t in enumerate(resto[1:], 1) if t in VERSOES_DESPORTIVAS
-                       and resto[i + 1:i + 2] != ["line"]), None)
-    return f"{modelo} {desportiva}" if desportiva else modelo
-
-
 def cilindrada_do_texto(texto):
     """"1.5 dCi" -> 1500 cc."""
     match = re.search(r"(?<![\d.,])([0-6])[.,](\d)(?![\d.,])", texto or "")

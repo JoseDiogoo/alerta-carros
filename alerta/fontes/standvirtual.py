@@ -37,7 +37,8 @@ def standvirtual(pagina, caminho="", preco_max=None):
                     texto=node.get("shortDescription") or "", destaque=bool(node.get("isPremiumTopAd")),
                     foto=(node.get("thumbnail") or {}).get("x2"),
                     combustivel=combustivel(params.get("fuel_type")), caixa=caixa(params.get("gearbox")),
-                    cilindrada=inteiro(params.get("engine_capacity")), potencia=inteiro(params.get("engine_power")))
+                    cilindrada=inteiro(params.get("engine_capacity")), potencia=inteiro(params.get("engine_power")),
+                    marca=params.get("make"), modelo_site=params.get("model"))
 
 
 def completar_standvirtual(anuncio):

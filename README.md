@@ -2,7 +2,7 @@
 
 Encontra os carros mais baratos face ao **valor de mercado** em Portugal, estima a **margem de lucro** e avisa no Telegram, sem serviços pagos.
 
-Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**, todos em paralelo: cada site de 15 em 15 segundos e o Facebook (7 cidades) de 3 em 3 minutos. Não há lista fixa de carros: o modelo é detetado no título (marca + modelo, com as versões desportivas à parte e erros de escrita corrigidos).
+Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**, todos em paralelo: cada site de 15 em 15 segundos e o Facebook (7 cidades) de 3 em 3 minutos. Não há listas de marcas ou modelos escritas à mão. O Standvirtual e o OLX dão a marca e o modelo em campos próprios, e esses valores formam um catálogo que se aprende sozinho. Nos outros sites (CustoJusto, Facebook, AutoX, Auto.pt), o modelo só é aceite quando o texto do anúncio contém exatamente uma marca e um modelo desse catálogo. Na dúvida, o carro aparece no painel como "modelo por confirmar", mas não entra no valor de mercado nem dá alerta.
 
 ## Como é avaliado cada carro
 
@@ -30,7 +30,8 @@ O código está no pacote `alerta/`, organizado por camadas (de dentro para fora
 
 | Módulo | O que faz |
 |---|---|
-| `alerta/texto.py`, `alerta/anuncio.py` | Dados de um anúncio: normalização, km, ano, marca e modelo (só marcas de automóveis), motor. Sem rede nem base. |
+| `alerta/texto.py`, `alerta/anuncio.py` | Dados de um anúncio: normalização, km, ano, motor. Sem rede nem base. |
+| `alerta/catalogo.py` | Marca e modelo com certeza: campos do site ou catálogo aprendido. Sem listas escritas à mão. |
 | `alerta/avaliacao.py` | Lê a descrição (avarias, pontos fortes) e dá a pontuação 0-100. |
 | `alerta/mercado.py` | Valor de mercado a partir de carros iguais, com os preços ajustados a ano e km. |
 | `alerta/negocio.py` | Filtros do utilizador e critério do Telegram. |
@@ -46,7 +47,8 @@ O código está no pacote `alerta/`, organizado por camadas (de dentro para fora
 
 ## Regras da base de dados
 
-- Só se guardam **carros** (marca de automóvel reconhecida) **até 15 000 €** (`preco_max_guardar`). Acima disso, um anúncio nunca serve de comparação para um carro até 5 000 €.
+- Só se guardam anúncios **até 15 000 €** (`preco_max_guardar`). Acima disso, um anúncio nunca serve de comparação para um carro até 5 000 €. Do Facebook, que mistura carros, motas e acessórios, só se guardam os que têm modelo confirmado.
+- Cada anúncio guarda a origem do modelo (`modelo_fonte`): `site` (campos do Standvirtual/OLX), `catalogo` (correspondência exata) ou vazio. De 10 em 10 minutos, os anúncios sem modelo voltam a ser comparados com o catálogo, que entretanto cresceu.
 - Um anúncio que **não aparece nos sites há 60 dias** (`retencao_dias`) é apagado, porque já foi vendido ou retirado. Os favoritos nunca são apagados.
 - A limpeza corre no arranque e de 6 em 6 horas. Quando apaga mais de 1 000 anúncios, a base é compactada.
 - Há índices para os comparáveis (`modelo, ano`), para os mais recentes (`visto_em`) e para a limpeza (`atualizado_em`).

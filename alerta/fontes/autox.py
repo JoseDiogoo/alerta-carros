@@ -24,4 +24,4 @@ def autox(pagina):
             brand, model, version, year, km, price = (g.strip() for g in match.groups())
             yield carro("autox", ad_id, f"{brand} {model} {version}", inteiro(price),
                         "https://autox.pt" + path, km=inteiro(km), ano=inteiro(year),
-                        foto=photo and photo.group())
+                        foto=photo and photo.group(), marca=brand, modelo_site=f"{model} {version}")

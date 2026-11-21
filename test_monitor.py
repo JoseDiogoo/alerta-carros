@@ -9,13 +9,16 @@ from alerta.config import load_config
 from alerta.db import abrir_db, limpar, vale_guardar
 from alerta.fontes import PAGINADAS
 from alerta.negocio import melhor
-from alerta.texto import km_do_texto, modelo_de
+from alerta.catalogo import Catalogo, identificar
+from alerta.texto import km_do_texto
 from alerta.vigia import ciclo_paginado
 
 EXEMPLO = Path(__file__).with_name("config.exemplo.toml")
 
 
 def yaris(id, preco, ano=2012, km=120000, origem="olx", titulo="Toyota Yaris 1.0 VVT-i", **extra):
+    # como no Standvirtual/OLX: marca e modelo vêm em campos do site
+    extra = {"marca": "toyota", "modelo_site": "yaris", **extra}
     return carro(origem, id, titulo, preco, f"https://exemplo/{id}", ano=ano, km=km, **extra)
 
 
@@ -42,18 +45,27 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(km_do_texto("ano 2021 158 mil kms"), 158000)
         self.assertEqual(km_do_texto("158.000 km"), 158000)
         self.assertEqual(km_do_texto("Clio 1.5 dci 2015"), None)
-        self.assertEqual(modelo_de("2015 VW Golf 1.6 TDI"), "volkswagen golf")
-        self.assertEqual(modelo_de("Vendo Renault Clio"), "renault clio")
 
-    def test_modelos_agrupados(self):
-        self.assertEqual(modelo_de("VW Golf 2.0 TDI R-Line"), "volkswagen golf")
-        self.assertEqual(modelo_de("Ford Fiesta 1.0 EcoBoost ST-Line"), "ford fiesta")
-        self.assertEqual(modelo_de("VW Golf GTI"), "volkswagen golf gti")
-        self.assertEqual(modelo_de("Mercedes-Benz Classe A 180 d AMG Line"), "mercedes-benz a")
-        self.assertEqual(modelo_de("Mercedes A 180"), "mercedes-benz a")
-        self.assertEqual(modelo_de("BMW 320d Touring"), "bmw serie 3")
-        self.assertEqual(modelo_de("BMW Série 3 Touring"), "bmw serie 3")
-        self.assertEqual(modelo_de("BMW X3 xDrive"), "bmw x3")
+    def test_marca_e_modelo_sem_adivinhar(self):
+        # campos do site (Standvirtual/OLX) são a referência
+        a = identificar(self.db, carro("standvirtual", "1", "Qualquer título", 5000, "u",
+                                       marca="mercedes-benz", modelo_site="c-220"))
+        self.assertEqual((a["modelo"], a["modelo_fonte"]), ("mercedes-benz c-220", "site"))
+        # os outros sites só com correspondência exata ao catálogo aprendido desses campos
+        cat = Catalogo(["toyota yaris", "toyota yaris-cross", "bmw 320", "mercedes-benz c-220", "citroen c3",
+                        "citroen c30", "land-rover range-rover-evoque"])
+        def cj(titulo, **e):
+            return identificar(self.db, carro("custojusto", "x", titulo, 5000, "u", **e), cat)["modelo"]
+        self.assertEqual(cj("Toyota Yaris 1.0 VVT-i"), "toyota yaris")
+        self.assertEqual(cj("Toyota Yaris Cross Hybrid"), "toyota yaris-cross")  # o mais específico
+        self.assertEqual(cj("BMW 320d Touring"), "bmw 320")  # "320d" = 320 diesel
+        self.assertEqual(cj("Mercedes C 220 CDI"), "mercedes-benz c-220")  # "mercedes" só pode ser uma marca
+        self.assertEqual(cj("Citroen C3 1.1"), "citroen c3")  # e não "c30"
+        self.assertEqual(cj("Land Rover Range Rover Evoque"), "land-rover range-rover-evoque")
+        self.assertIsNone(cj("VW Golf 1.6 TDI"))  # nem marca nem modelo no catálogo: não se adivinha
+        self.assertIsNone(cj("Toyota Corola 1.4"))  # erro de escrita: não se adivinha
+        self.assertIsNone(cj("Trotinete elétrica Xiaomi"))
+        self.assertEqual(cj("Yaris 1.0", marca="Toyota"), "toyota yaris")  # marca dada pelo site (AutoX, Auto.pt)
 
     def test_alertar_todos_nao_duplica(self):
         self.config["alertar_todos"] = True
@@ -64,7 +76,7 @@ class MonitorTest(unittest.TestCase):
 
     def test_avariados_entram_com_etiqueta(self):
         clio = lambda id, preco, **e: carro("olx", id, "Renault Clio 1.2", preco, f"https://exemplo/{id}",
-                                            ano=2012, km=120000, **e)
+                                            ano=2012, km=120000, marca="renault", modelo_site="clio", **e)
         self.ciclo(p1=[yaris(f"m{i}", 6000 + i * 10) for i in range(10)]
                    + [clio(f"c{i}", 6000 + i * 10) for i in range(10)])
         alertas = self.ciclo(p1=[
@@ -112,11 +124,12 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(len(avisos), 3)
 
     def test_regras_da_base(self):
-        self.assertFalse(vale_guardar({"modelo": None, "preco": 1000}, self.config))  # trotinete, mota...
-        self.assertFalse(vale_guardar({"modelo": "bmw serie 5", "preco": 30000}, self.config))
-        self.assertTrue(vale_guardar({"modelo": "toyota yaris", "preco": 6000}, self.config))
+        self.assertFalse(vale_guardar({"modelo": None, "preco": 1000, "origem": "facebook"}, self.config))
+        self.assertTrue(vale_guardar({"modelo": None, "preco": 1000, "origem": "custojusto"}, self.config))
+        self.assertFalse(vale_guardar({"modelo": "bmw 520", "preco": 30000, "origem": "olx"}, self.config))
+        self.assertTrue(vale_guardar({"modelo": "toyota yaris", "preco": 6000, "origem": "olx"}, self.config))
         self.ciclo(p1=[yaris("velho", 6000), yaris("novo", 6100), yaris("caro", 30000),
-                       carro("olx", "trotinete", "Trotinete elétrica", 200, "https://exemplo/t")])
+                       carro("facebook", "trotinete", "Trotinete elétrica", 200, "https://exemplo/t")])
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM anuncios").fetchone()[0], 2)  # caro e trotinete fora
         self.db.execute("UPDATE anuncios SET atualizado_em = '2000-01-01' WHERE id = 'velho'")
         self.assertEqual(limpar(self.db, self.config), 1)  # não visto há mais de 60 dias
