@@ -103,38 +103,55 @@ def entre(valor, minimo, maximo):
     return max(minimo, min(maximo, valor))
 
 
-ANO_MAX = time.localtime().tm_year + 1
+ANO_MAX = time.localtime().tm_year
+PRECO_TETO = BASE["preco_max_guardar"]  # acima disto a base não guarda anúncios
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def modelos_conhecidos():
+    """Modelos na base, por ordem alfabética. Em cache e estável: se as opções de um filtro mudassem a cada
+    recolha (ex.: ordenadas pelo número de anúncios), o Streamlit apagava o que o utilizador escolheu."""
+    return lista("SELECT DISTINCT modelo FROM anuncios WHERE modelo IS NOT NULL ORDER BY modelo")
+
+
+def com_escolhidos(opcoes, chave):
+    """As opções incluem sempre o que já está escolhido (senão a escolha desaparecia)."""
+    return sorted(set(opcoes) | set(st.session_state.get(chave) or []))
+
 
 with st.sidebar:
     st.header("Filtros")
     f = {}
-    f["preco"] = st.slider("Preço (€)", 300, 60000, (entre(BASE["preco_min"], 300, 59900),
-                                                    entre(BASE["preco_max"], 400, 60000)), 100)
-    f["ano"] = st.slider("Ano", 1995, ANO_MAX, (entre(BASE["ano_min"], 1995, ANO_MAX), ANO_MAX))
-    f["km"] = st.slider("Km máximos", 10000, 400000, entre(BASE["km_max"], 10000, 400000), 10000)
-    marcas = st.multiselect("Marca", lista(
-        "SELECT substr(modelo, 1, instr(modelo, ' ') - 1) AS marca FROM anuncios WHERE modelo IS NOT NULL "
-        "GROUP BY marca ORDER BY COUNT(*) DESC"), format_func=str.title, placeholder="Todas")
-    todos_modelos = lista("SELECT modelo FROM anuncios WHERE modelo IS NOT NULL GROUP BY modelo "
-                          "ORDER BY COUNT(*) DESC")
-    modelos = st.multiselect("Modelo", [x for x in todos_modelos if not marcas or x.split()[0] in marcas],
-                             format_func=str.title, placeholder="Todos")
+    f["preco"] = st.slider("Preço (€)", 300, PRECO_TETO, (entre(BASE["preco_min"], 300, PRECO_TETO - 100),
+                                                         entre(BASE["preco_max"], 400, PRECO_TETO)), 100,
+                           key="f_preco")
+    f["ano"] = st.slider("Ano", 1995, ANO_MAX, (entre(BASE["ano_min"], 1995, ANO_MAX), ANO_MAX), key="f_ano")
+    f["km"] = st.slider("Km máximos", 10000, 400000, entre(BASE["km_max"], 10000, 400000), 10000, key="f_km")
+    todos_modelos = modelos_conhecidos()
+    marcas = st.multiselect("Marca", com_escolhidos({x.split()[0] for x in todos_modelos}, "f_marcas"),
+                            format_func=str.title, placeholder="Todas", key="f_marcas")
+    modelos = st.multiselect("Modelo", com_escolhidos([x for x in todos_modelos if not marcas
+                                                       or x.split()[0] in marcas], "f_modelos"),
+                             format_func=str.title, placeholder="Todos", key="f_modelos")
     f["combustivel"] = st.multiselect("Combustível", ["Gasolina", "Gasóleo", "Híbrido", "Elétrico", "GPL"],
-                                      placeholder="Todos")
-    f["caixa"] = st.multiselect("Caixa", ["Manual", "Automática"], placeholder="Todas")
-    f["vendedor"] = st.radio("Vendedor", ["Todos", "Particular", "Profissional"], horizontal=True)
-    f["sites"] = st.multiselect("Sites", FONTES, format_func=NOMES.get,
-                                placeholder="Todos")
-    f["local"] = st.text_input("Zona", placeholder="ex.: Lisboa, Porto, Braga")
-    f["nacionais"] = st.checkbox("Só carros nacionais", BASE["apenas_nacionais"])
+                                      placeholder="Todos", key="f_combustivel")
+    f["caixa"] = st.multiselect("Caixa", ["Manual", "Automática"], placeholder="Todas", key="f_caixa")
+    f["vendedor"] = st.radio("Vendedor", ["Todos", "Particular", "Profissional"], horizontal=True, key="f_vendedor")
+    f["sites"] = st.multiselect("Sites", FONTES, format_func=NOMES.get, placeholder="Todos", key="f_sites")
+    f["local"] = st.text_input("Zona", placeholder="ex.: Lisboa, Porto, Braga", key="f_local")
+    f["nacionais"] = st.checkbox("Só carros nacionais", BASE["apenas_nacionais"], key="f_nacionais")
     st.header("Negócio")
     f["custos"] = st.number_input("Custos de revenda (€)", 0, 10000, entre(BASE["custos_revenda"], 0, 10000), 100,
-                                  help="Inspeção, limpeza, pequenas reparações e anúncio")
+                                  help="Inspeção, limpeza, pequenas reparações e anúncio", key="f_custos")
     f["comparaveis"] = st.slider("Anúncios comparáveis mínimos", 3, 30, entre(BASE["min_comparaveis"], 3, 30),
-                                 help="Mais anúncios = valor de mercado mais fiável")
-    f["excluir"] = st.toggle("Esconder carros para peças e com problemas legais", True)
-    f["avaria"] = st.toggle("Mostrar carros com avaria", True,
+                                 help="Mais anúncios = valor de mercado mais fiável", key="f_comparaveis")
+    f["excluir"] = st.toggle("Esconder carros para peças e com problemas legais", True, key="f_excluir")
+    f["avaria"] = st.toggle("Mostrar carros com avaria", True, key="f_avaria",
                             help="Aparecem com a etiqueta AVARIA. O custo da reparação não é estimado.")
+    if st.button("Repor filtros", width="stretch"):
+        for chave in [k for k in st.session_state if str(k).startswith("f_")]:
+            del st.session_state[chave]
+        st.rerun()
     st.caption(f"Telegram: só os melhores — ≥{round(BASE['desconto_telegram'] * 100)}% abaixo do mercado "
                f"(≥{round(BASE['desconto_foco'] * 100)}% em {', '.join(x.title() for x in BASE['marcas_foco'])}), "
                f"≥{BASE['comparaveis_telegram']} comparáveis e pontuação ≥{BASE['pontuacao_minima']}.")
