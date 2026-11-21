@@ -32,6 +32,8 @@ GRAVES = [
     "salvado", "sinistrado", "sinistro", "acidentado", "batido", "danificado", "danos", "estragos", "capotado",
     "inundado", "inundacao", "submerso", "chassis empenado", "chassi torto", "chassis torto",
     "para pecas", "vende se para pecas", "pecas", "para reparar", "reparar", "avariado", "avaria",
+    "para reparacao", "precisa de reparacao", "a precisar de reparacao", "com avaria", "com defeito",
+    "nao liga", "motor fundido", "caixa estragada", "motor estragado",
     "luz do motor", "luz de avaria", "check engine", "modo de seguranca", "fap entupido", "filtro de particulas entupido",
     "egr avariada", "corrente de distribuicao", "barulho no motor", "motor a bater", "bate biela",
     "sem chave", "chave perdida", "leilao", "sucata", "abate",
@@ -66,13 +68,61 @@ BONS = [
 
 NEGACOES = {"sem", "nunca", "nao", "nenhum", "nenhuma", "zero", "livre"}
 
+# Avarias mecânicas/elétricas e danos: o carro aparece na mesma, com a etiqueta "AVARIA". Não se estima o custo
+# (só um mecânico sabe) e não tiram pontos: a decisão é de quem compra.
+AVARIAS = {
+    "avariado", "avaria", "nao pega", "nao anda", "nao trabalha", "nao arranca", "parado ha", "esta parado",
+    "nao liga", "com avaria", "com defeito", "para reparar", "reparar", "para reparacao",
+    "precisa de reparacao", "a precisar de reparacao",
+    "motor partido", "motor avariado", "motor gripado", "motor a precisar", "precisa de motor",
+    "motor com problema", "problema no motor", "problema de motor", "problemas no motor", "falha de motor",
+    "motor nao pega", "motor fundido", "motor estragado", "barulho no motor", "motor a bater", "bate biela",
+    "junta da cabeca", "junta de cabeca", "cabeca do motor", "caixa avariada", "caixa partida",
+    "problema na caixa", "problema de caixa", "problemas na caixa", "caixa a precisar", "caixa com problema",
+    "caixa faz barulho", "caixa de velocidades avariada", "caixa estragada", "sinistrado", "sinistro",
+    "acidentado", "batido", "danificado", "danos", "estragos",
+    "deita fumo", "fuma muito", "fumo branco", "fumo azul", "consome oleo", "gasta oleo", "come oleo",
+    "turbo avariado", "turbo partido", "turbo a precisar", "volante bimassa", "bimassa", "corrente de distribuicao",
+    "injetores avariados", "bomba injetora", "airbag disparado", "airbags disparados", "airbag aberto",
+    "luz do airbag", "luz airbag", "embraiagem partida", "embraiagem a patinar", "embraiagem gasta",
+    "fap entupido", "filtro de particulas entupido", "luz do motor", "luz de avaria", "check engine",
+    "modo de seguranca", "egr avariada", "ar condicionado avariado", "ar condicionado nao", "ac nao funciona",
+    "sensor avariado",
+}
+# Avaria sem nome: só aparece na etiqueta quando a descrição não diz o que é.
+GENERICOS = {"avariado", "avaria", "nao pega", "nao anda", "nao trabalha", "nao arranca", "parado ha", "esta parado",
+             "nao liga", "com avaria", "com defeito", "para reparar", "reparar", "para reparacao",
+             "precisa de reparacao", "a precisar de reparacao"}
+# Peças, problemas legais ou estruturais: não é negócio (nunca vai para o Telegram).
+INVIAVEIS = {
+    "penhora", "penhorado", "penhorada", "reserva de propriedade", "com reserva", "sem documentos", "sem livrete",
+    "sem dua", "documentos em atraso", "sem matricula", "matricula estrangeira", "nao legalizado", "por legalizar",
+    "salvado", "capotado", "inundado", "inundacao", "submerso", "chassis empenado", "chassi torto", "chassis torto",
+    "para pecas", "vende se para pecas", "pecas", "leilao", "sucata", "abate",
+}
+
+
+def avaria(sinais):
+    """O que a descrição diz que está avariado (sem custo) e se há motivo para não comprar.
+
+    Devolve itens (para a etiqueta), tem (há avaria), incerta (avaria sem nome) e inviaveis.
+    """
+    termos = [*sinais.get("graves", []), *sinais.get("leves", [])]
+    concretos = [t for t in termos if t in AVARIAS and t not in GENERICOS]
+    genericos = [t for t in termos if t in GENERICOS]
+    itens = concretos or genericos[:1]
+    return {"itens": itens, "tem": bool(itens), "incerta": not concretos and bool(genericos),
+            "inviaveis": [t for t in sinais.get("graves", []) if t in INVIAVEIS]}
+
 
 def _encontra(texto, termos, ignorar_negados):
     achados = []
     for termo in termos:
         for m in re.finditer(rf"(?:^| ){re.escape(termo)}(?= |$)", texto):
-            anteriores = texto[:m.start()].split()[-3:]
-            if ignorar_negados and NEGACOES & set(anteriores):
+            anteriores = texto[:m.start()].split()
+            if "|" in anteriores:  # a negação só vale dentro da mesma frase
+                anteriores = anteriores[len(anteriores) - anteriores[::-1].index("|"):]
+            if ignorar_negados and NEGACOES & set(anteriores[-3:]):
                 continue  # "sem danos", "nunca batido", "não tem avarias"
             achados.append(termo)
             break
@@ -81,7 +131,9 @@ def _encontra(texto, termos, ignorar_negados):
 
 
 def sinais_do_texto(titulo, descricao):
-    texto = normalizar(f"{titulo} {descricao}")
+    # frases separadas por " | ": um termo não atravessa frases e "não" só nega a própria frase
+    frases = re.split(r"[.,;:!?\n]+", f"{titulo}. {descricao}")
+    texto = " | ".join(filter(None, (normalizar(f) for f in frases)))
     return {"graves": _encontra(texto, GRAVES, True), "leves": _encontra(texto, LEVES, True),
             "bons": _encontra(texto, BONS, False), "tem_descricao": len(normalizar(descricao)) > 40}
 
@@ -96,6 +148,13 @@ def pontuar(anuncio, mercado, sinais, extras):
             pontos -= 20
             alertas.append("preço muito abaixo do mercado (possível burla)")
         confianca = min(1.0, mercado["n"] / 15)
+        if (mercado.get("dispersao") or 0) > 0.35:  # comparáveis com preços muito diferentes entre si
+            confianca *= 0.5
+            alertas.append("preços de mercado muito variáveis para este carro")
+        if mercado.get("nivel") == "mesmo motor e caixa":
+            fortes.append("comparado com carros de motor e caixa iguais")
+        elif mercado.get("nivel") == "mesmo modelo e combustível":
+            confianca *= 0.8
         pontos = 50 + (pontos - 50) * (0.6 + 0.4 * confianca)  # poucos comparáveis = menos certeza
     else:
         alertas.append("sem carros comparáveis suficientes")
@@ -108,11 +167,19 @@ def pontuar(anuncio, mercado, sinais, extras):
         elif rel >= 1.3:
             pontos -= 6
             alertas.append(f"km acima da média ({int(kmmed):,} km)".replace(",", " "))
+    # avarias não tiram pontos (a gravidade é desconhecida): aparecem à parte, na etiqueta AVARIA
     for termo in sinais.get("graves", []):
-        pontos -= 30
-        alertas.append(f"menciona «{termo}»")
-    for termo in sinais.get("leves", [])[:4]:
-        pontos -= 6
+        if termo in INVIAVEIS:
+            pontos -= 30
+            alertas.append(f"menciona «{termo}»")
+        elif termo not in AVARIAS:  # inspeção, chave perdida...
+            pontos -= 8
+            alertas.append(f"menciona «{termo}»")
+    graves = [f" {g} " for g in sinais.get("graves", [])]
+    leves = [t for t in sinais.get("leves", [])  # "precisa de" já está dentro de "precisa de motor"
+             if t not in AVARIAS and not any(f" {t} " in g for g in graves)]
+    for termo in leves[:4]:
+        pontos -= 3
         alertas.append(f"menciona «{termo}»")
     for termo in sinais.get("bons", [])[:6]:
         pontos += 3

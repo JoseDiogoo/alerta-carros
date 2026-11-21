@@ -2,6 +2,8 @@
 
 import threading
 import time
+from datetime import datetime
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -24,6 +26,7 @@ st.markdown("""
          background: #e3242b; color: #fff}
   .selo.suspeito {background: #d97706}
   .selo.neutro {background: #333; color: #d4d4d4}
+  .selo.avaria {background: #facc15; color: #111; font-weight: 700}
   .detalhes {color: #a3a3a3; font-size: .8rem; margin: 0 0 .4rem; min-height: 2.2em}
   div[data-testid="stImage"] img {border-radius: 10px; aspect-ratio: 4/3; object-fit: cover}
   /* sem ecrã cinzento enquanto procura */
@@ -35,46 +38,37 @@ CONFIG_PATH = m.ROOT / "config.toml"
 if not CONFIG_PATH.is_file():
     CONFIG_PATH = m.ROOT / "config.exemplo.toml"
 BASE = m.load_config(CONFIG_PATH)
-FONTES_RAPIDAS = [x for x in BASE["fontes"] if x != "facebook"]  # o Facebook é lento: fica na pesquisa
-ATUALIZAR_SEGUNDOS = 60
+FONTES = BASE["fontes"]
+ATUALIZAR_SEGUNDOS = 15
 SEM_FOTO = "https://placehold.co/640x480/1f2937/9ca3af?text=Sem+foto"
 COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto", "modelo", "combustivel",
-           "caixa", "profissional", "importado", "sinais", "extras"]
+           "caixa", "profissional", "importado", "sinais", "extras", "cilindrada", "potencia", "carrocaria"]
+CAMINHO_DB = m.ROOT / "painel.sqlite3"
 
 
-# ---------- recolha partilhada por todas as sessões ----------
+# ---------- recolha em segundo plano, partilhada por todas as sessões ----------
+
+def recolha_continua(s):
+    """Junta o mercado e depois lê todos os sites em paralelo, sem parar (sem alertas: isso é o monitor)."""
+    db = m.abrir_db(CAMINHO_DB)
+    m.semear(db, {**BASE, "paginas_semente": 8}, aviso=lambda *_: None)
+    db.close()
+    s["semeado"] = True
+    for origem in [*FONTES, "mercado"]:
+        threading.Thread(target=m.vigiar, args=(origem, CAMINHO_DB, BASE, threading.Event()),
+                         kwargs={"so_guardar": True, "erros": s["erros"]}, daemon=True).start()
+
 
 @st.cache_resource
 def estado():
-    esquema = 3  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
-    db = m.abrir_db(m.ROOT / "painel.sqlite3", check_same_thread=False)
+    esquema = 4  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
+    db = m.abrir_db(CAMINHO_DB, check_same_thread=False)
     db.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
                "guardado_em TEXT, PRIMARY KEY (origem, id))")
     db.commit()
-    return {"db": db, "lock": threading.Lock(), "ultima": 0.0, "erros": {}, "semeado": False}
-
-
-def recolher():
-    s = estado()
-    if not s["lock"].acquire(blocking=False):
-        return  # outra sessão já está a recolher
-    try:
-        if not s["semeado"]:
-            with st.spinner("Primeira vez: a conhecer o mercado (≈1 min)…"):
-                m.semear(s["db"], {**BASE, "paginas_semente": 8}, aviso=lambda *_: None)
-            s["semeado"] = True
-        if time.time() - s["ultima"] < ATUALIZAR_SEGUNDOS - 5:
-            return
-        for origem in FONTES_RAPIDAS:
-            try:
-                m.ciclo_paginado(s["db"], origem, BASE, so_guardar=True)
-                s["erros"].pop(origem, None)
-            except (RuntimeError, KeyError, TypeError, ValueError) as erro:
-                s["erros"][origem] = str(erro)
-        m.explorar(s["db"], BASE, aviso=lambda *_: None)  # o mercado conhecido cresce a cada minuto
-        s["ultima"] = time.time()
-    finally:
-        s["lock"].release()
+    s = {"db": db, "erros": {}, "semeado": False}
+    threading.Thread(target=recolha_continua, args=(s,), daemon=True).start()
+    return s
 
 
 # ---------- filtros ----------
@@ -95,12 +89,20 @@ def lista(sql, args=()):
     return [r[0] for r in estado()["db"].execute(sql, args) if r[0]]
 
 
+def entre(valor, minimo, maximo):
+    """Valor do config.toml dentro dos limites do controlo (senão o Streamlit dá erro)."""
+    return max(minimo, min(maximo, valor))
+
+
+ANO_MAX = time.localtime().tm_year + 1
+
 with st.sidebar:
     st.header("Filtros")
     f = {}
-    f["preco"] = st.slider("Preço (€)", 300, 60000, (max(300, BASE["preco_min"]), BASE["preco_max"]), 100)
-    f["ano"] = st.slider("Ano", 1995, 2026, (BASE["ano_min"], 2026))
-    f["km"] = st.slider("Km máximos", 10000, 400000, BASE["km_max"], 10000)
+    f["preco"] = st.slider("Preço (€)", 300, 60000, (entre(BASE["preco_min"], 300, 59900),
+                                                    entre(BASE["preco_max"], 400, 60000)), 100)
+    f["ano"] = st.slider("Ano", 1995, ANO_MAX, (entre(BASE["ano_min"], 1995, ANO_MAX), ANO_MAX))
+    f["km"] = st.slider("Km máximos", 10000, 400000, entre(BASE["km_max"], 10000, 400000), 10000)
     marcas = st.multiselect("Marca", lista(
         "SELECT substr(modelo, 1, instr(modelo, ' ') - 1) AS marca FROM anuncios WHERE modelo IS NOT NULL "
         "GROUP BY marca ORDER BY COUNT(*) DESC"), format_func=str.title, placeholder="Todas")
@@ -112,36 +114,37 @@ with st.sidebar:
                                       placeholder="Todos")
     f["caixa"] = st.multiselect("Caixa", ["Manual", "Automática"], placeholder="Todas")
     f["vendedor"] = st.radio("Vendedor", ["Todos", "Particular", "Profissional"], horizontal=True)
-    f["sites"] = st.multiselect("Sites", FONTES_RAPIDAS + ["facebook"], format_func=m.NOMES.get,
+    f["sites"] = st.multiselect("Sites", FONTES, format_func=m.NOMES.get,
                                 placeholder="Todos")
     f["local"] = st.text_input("Zona", placeholder="ex.: Lisboa, Porto, Braga")
     f["nacionais"] = st.checkbox("Só carros nacionais", BASE["apenas_nacionais"])
     st.header("Negócio")
-    f["custos"] = st.number_input("Custos de revenda (€)", 0, 10000, BASE["custos_revenda"], 100,
+    f["custos"] = st.number_input("Custos de revenda (€)", 0, 10000, entre(BASE["custos_revenda"], 0, 10000), 100,
                                   help="Inspeção, limpeza, pequenas reparações e anúncio")
-    f["margem"] = st.number_input("Margem mínima (€)", 0, 50000, BASE["margem_minima"], 100)
-    f["desconto"] = st.slider("Desconto mínimo face ao mercado (%)", 0, 60,
-                              round((1 - BASE["desconto_mercado"]) * 100))
-    f["comparaveis"] = st.slider("Anúncios comparáveis mínimos", 3, 30, BASE["min_comparaveis"],
+    f["comparaveis"] = st.slider("Anúncios comparáveis mínimos", 3, 30, entre(BASE["min_comparaveis"], 3, 30),
                                  help="Mais anúncios = valor de mercado mais fiável")
-    f["pontuacao"] = st.slider("Pontuação mínima", 0, 100, BASE["pontuacao_minima"],
-                               help="Avaliação 0-100: preço vs mercado, km, descrição, donos, garantia, extras")
-    f["excluir"] = st.toggle("Esconder peças, avariados e sinistrados", True)
+    f["excluir"] = st.toggle("Esconder carros para peças e com problemas legais", True)
+    f["avaria"] = st.toggle("Mostrar carros com avaria", True,
+                            help="Aparecem com a etiqueta AVARIA. O custo da reparação não é estimado.")
+    st.caption(f"Telegram: só os melhores — ≥{round(BASE['desconto_telegram'] * 100)}% abaixo do mercado "
+               f"(≥{round(BASE['desconto_foco'] * 100)}% em {', '.join(x.title() for x in BASE['marcas_foco'])}), "
+               f"≥{BASE['comparaveis_telegram']} comparáveis e pontuação ≥{BASE['pontuacao_minima']}.")
 
 
-def candidatos(limite=3000):
-    """Anúncios que passam os filtros de base (SQL), mais recentes primeiro."""
+def candidatos(limite=3000, marca=None):
+    """Anúncios que passam os filtros de base (SQL), mais recentes primeiro. marca: só essa marca."""
+    marcas_sel, modelos_sel = ([marca], []) if marca else (marcas, modelos)
     sql = [f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE modelo IS NOT NULL AND preco BETWEEN ? AND ? "
            "AND (ano IS NULL OR ano BETWEEN ? AND ?) AND (km IS NULL OR km <= ?)"]
     args = [*f["preco"], *f["ano"], f["km"]]
-    for coluna, valores in (("modelo", modelos), ("combustivel", f["combustivel"]), ("caixa", f["caixa"]),
+    for coluna, valores in (("modelo", modelos_sel), ("combustivel", f["combustivel"]), ("caixa", f["caixa"]),
                             ("origem", f["sites"])):
         if valores:
             sql.append(f"AND {coluna} IN ({','.join('?' * len(valores))})")
             args += valores
-    if marcas:
-        sql.append("AND (" + " OR ".join("modelo LIKE ?" for _ in marcas) + ")")
-        args += [f"{marca} %" for marca in marcas]
+    if marcas_sel:
+        sql.append("AND (" + " OR ".join("modelo LIKE ?" for _ in marcas_sel) + ")")
+        args += [f"{x} %" for x in marcas_sel]
     if f["vendedor"] != "Todos":
         sql.append("AND profissional = ?")
         args.append(int(f["vendedor"] == "Profissional"))
@@ -155,25 +158,28 @@ def candidatos(limite=3000):
     regras = {**BASE, "excluir": BASE["excluir"] if f["excluir"] else [],
               "excluir_texto": BASE["excluir_texto"] if f["excluir"] else []}
     anuncios = (m.carro(**dict(zip(COLUNAS, r))) for r in estado()["db"].execute(" ".join(sql), args))
-    return [a for a in anuncios if not m.excluido(a, regras)]
+    unicos = {}  # o mesmo carro publicado em vários sites aparece uma vez
+    for a in anuncios:
+        if not m.excluido(a, regras):
+            unicos.setdefault((a["modelo"], a["ano"], a["km"] or (a["origem"], a["id"]), a["preco"]), a)
+    return list(unicos.values())
 
 
 def analisar(anuncio, db):
-    info = m.comparar(db, anuncio, f["comparaveis"])
-    sinais = m.av.carregar(anuncio.get("sinais")) or m.av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])
-    extras = m.av.carregar(anuncio.get("extras"))
-    if info["mediana"] is None:
-        return {**anuncio, "mediana": None, "n": info["n"], "margem": None, "desconto": None, "bom": False,
-                "suspeito": False, "pontuacao": None, "fortes": [], "alertas": []}
-    mediana = info["mediana"]
-    analise = {"mediana": round(mediana), "n": info["n"], "km_mediano": info["km_mediano"],
-               "margem": round(mediana - anuncio["preco"] - f["custos"]),
-               "desconto": round((1 - anuncio["preco"] / mediana) * 100),
-               "suspeito": anuncio["preco"] < mediana * BASE["limite_burla"]}
-    pontuacao, fortes, alertas = m.av.pontuar(anuncio, analise, sinais, extras)
-    return {**anuncio, **analise, "pontuacao": pontuacao, "fortes": fortes, "alertas": alertas,
-            "bom": (analise["margem"] >= f["margem"] and analise["desconto"] >= f["desconto"]
-                    and pontuacao >= f["pontuacao"] and not sinais["graves"])}
+    """A mesma avaliação do monitor (alertas do Telegram), com os custos e comparáveis do painel."""
+    anuncio = {**anuncio, "sinais": m.av.carregar(anuncio.get("sinais")) or None,
+               "extras": m.av.carregar(anuncio.get("extras"))}
+    m.completar_motor(anuncio)
+    analise = m.analisar(db, anuncio, {**BASE, "custos_revenda": f["custos"], "min_comparaveis": f["comparaveis"]})
+    return {**anuncio, **analise, "bom": m.melhor(anuncio, analise, BASE)}  # bom = iria para o Telegram
+
+
+def analisados(marca=None):
+    """Todos os carros dentro dos filtros, avaliados (com avaria incluídos, se o filtro deixar)."""
+    db = estado()["db"]
+    lista_ = [analisar(a, db) for a in candidatos(marca=marca)]
+    return [a for a in lista_ if (f["avaria"] or not a["avaria"]["tem"])
+            and not (f["excluir"] and a["avaria"]["inviaveis"])]
 
 
 # ---------- cartões ----------
@@ -183,32 +189,43 @@ euros = m.euros
 
 def cartao(anuncio, chave, favorito=False):
     with st.container(border=True):
-        st.image(anuncio["foto"] or SEM_FOTO, use_container_width=True)
+        st.image(anuncio["foto"] or SEM_FOTO, width="stretch")
         if anuncio["margem"] is None:
             selo = '<span class="selo neutro">a recolher dados de mercado</span>'
+        elif anuncio.get("irreal"):
+            selo = f'<span class="selo suspeito">{anuncio["desconto"]}% abaixo · preço irreal</span>'
         elif anuncio["suspeito"]:
             selo = f'<span class="selo suspeito">{anuncio["desconto"]}% abaixo · confirmar</span>'
         elif anuncio["bom"]:
-            selo = f'<span class="selo">{anuncio["desconto"]}% abaixo do mercado</span>'
+            selo = f'<span class="selo">★ {anuncio["desconto"]}% abaixo do mercado</span>'
+        elif anuncio["desconto"] > 0:
+            selo = f'<span class="selo neutro">{anuncio["desconto"]}% abaixo do mercado</span>'
         else:
             selo = f'<span class="selo neutro">{-anuncio["desconto"]:+d}% vs mercado</span>'
+        if anuncio["avaria"]["tem"]:
+            itens = ", ".join(anuncio["avaria"]["itens"][:3])
+            selo += f' <span class="selo avaria" title="{escape(itens)}">⚠ AVARIA: {escape(itens[:40])}</span>'
         if anuncio["margem"] is None:
             margem = '<p class="margem">&nbsp;</p>'
         else:
             sinal = "+" if anuncio["margem"] >= 0 else "−"
             classe = "margem" if anuncio["margem"] >= 0 else "margem neg"
             margem = f'<p class="{classe}">margem {sinal}{euros(abs(anuncio["margem"]))}</p>'
-        mercado = (f'<p class="mercado">mercado ~{euros(anuncio["mediana"])} · {anuncio["n"]} anúncios</p>'
-                   if anuncio["mediana"] else '<p class="mercado">&nbsp;</p>')
-        modelo = (anuncio.get("modelo") or anuncio["titulo"]).title()
-        st.markdown(f'{selo}<p class="marca">{modelo}</p><p class="titulo">{anuncio["titulo"][:90]}</p>'
+        mercado = (f'<p class="mercado" title="{escape(anuncio["nivel"] or "")}">mercado ~{euros(anuncio["mediana"])}'
+                   f'{" (prudente)" if anuncio.get("prudente_usado") else ""} · {anuncio["n"]} comparáveis</p>' if anuncio["mediana"] else '<p class="mercado">&nbsp;</p>')
+        # o texto vem dos sites: escapar antes de o pôr em HTML
+        modelo = escape((anuncio.get("modelo") or anuncio["titulo"]).title())
+        st.markdown(f'{selo}<p class="marca">{modelo}</p><p class="titulo">{escape(anuncio["titulo"][:90])}</p>'
                     f'<p class="preco">{euros(anuncio["preco"])}</p>{mercado}{margem}',
                     unsafe_allow_html=True)
         detalhes = [str(anuncio["ano"]) if anuncio["ano"] else None,
                     f"{anuncio['km']:,} km".replace(",", " ") if anuncio["km"] else None,
+                    f"{anuncio['cilindrada'] / 1000:.1f}" if anuncio.get("cilindrada") else None,
+                    f"{anuncio['potencia']} cv" if anuncio.get("potencia") else None,
                     anuncio["combustivel"], anuncio["caixa"],
                     (anuncio["local"] or "").split(",")[0] or None, m.NOMES[anuncio["origem"]]]
-        st.markdown(f'<p class="detalhes">{" · ".join(d for d in detalhes if d)}</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="detalhes">{escape(" · ".join(d for d in detalhes if d))}</p>',
+                    unsafe_allow_html=True)
         if anuncio.get("pontuacao") is not None:
             st.markdown(f'<p class="detalhes"><b>Pontuação {anuncio["pontuacao"]}/100</b></p>',
                         unsafe_allow_html=True)
@@ -216,19 +233,22 @@ def cartao(anuncio, chave, favorito=False):
                 st.caption("A favor: " + ", ".join(anuncio["fortes"][:4]))
             if anuncio["alertas"]:
                 st.caption("Atenção: " + ", ".join(anuncio["alertas"][:3]))
+        if anuncio["avaria"]["tem"] and anuncio["margem"] is not None:
+            st.caption("🔧 Margem sem contar a reparação: confirmar o custo com um mecânico.")
         a, b = st.columns([3, 2])
-        a.link_button("Ver anúncio", anuncio["url"], use_container_width=True)
+        a.link_button("Ver anúncio", anuncio["url"], width="stretch")
         db = estado()["db"]
         if favorito:
-            if b.button("Remover", key=f"{chave}-rm", help="Remover dos favoritos", use_container_width=True):
+            if b.button("Remover", key=f"{chave}-rm", help="Remover dos favoritos", width="stretch"):
                 with db:
                     db.execute("DELETE FROM favoritos_v2 WHERE origem = ? AND id = ?", (anuncio["origem"], anuncio["id"]))
                 st.rerun()
-        elif b.button("Guardar", key=f"{chave}-fav", help="Guardar nos favoritos", use_container_width=True):
+        elif b.button("Guardar", key=f"{chave}-fav", help="Guardar nos favoritos", width="stretch"):
             with db:
                 db.execute("INSERT OR REPLACE INTO favoritos_v2 VALUES (?, ?, ?, datetime('now'))",
                            (anuncio["origem"], anuncio["id"], anuncio["preco"]))
-            st.toast(f"Guardado nos favoritos: {anuncio['titulo'][:40]}")
+            st.session_state["aviso"] = f"Guardado nos favoritos: {anuncio['titulo'][:40]}"
+            st.rerun(scope="app")  # o separador Favoritos é outro fragmento: redesenha a página toda
 
 
 def grelha(anuncios, prefixo, colunas=4, favorito=False):
@@ -241,57 +261,65 @@ def grelha(anuncios, prefixo, colunas=4, favorito=False):
 # ---------- página ----------
 
 st.markdown('<div class="hero"><h1>Alerta <span>Carros</span></h1><p>Os carros mais baratos face ao valor de '
-            'mercado em Standvirtual, OLX, CustoJusto, Auto.pt e AutoX, com margem de lucro estimada e atualização '
-            'a cada minuto.</p></div>', unsafe_allow_html=True)
+            'mercado em Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace, com margem de lucro '
+            f'estimada e atualização a cada {ATUALIZAR_SEGUNDOS} segundos.</p></div>', unsafe_allow_html=True)
+if aviso := st.session_state.pop("aviso", None):
+    st.toast(aviso)
 
-negocios, favoritos, mercado_tab, procura = st.tabs(
-    ["Melhores negócios", "Favoritos", "Mercado", "Pesquisar modelo"])
+negocios, toyota_tab, favoritos, mercado_tab, procura = st.tabs(
+    ["Melhores negócios", "Toyota", "Favoritos", "Mercado", "Pesquisar modelo"])
 
 
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def painel():
-    recolher()
     s = estado()
-    analisados = [analisar(a, s["db"]) for a in candidatos()]
+    if not s["semeado"]:
+        st.info("Primeira vez: a conhecer o mercado nos 6 sites (cerca de 1 minuto). A página atualiza sozinha.")
+    todos = analisados()
 
     a, b, c, d = st.columns(4)
     total = s["db"].execute("SELECT COUNT(*) FROM anuncios").fetchone()[0]
     a.metric("Carros conhecidos", f"{total:,}".replace(",", " "))
-    b.metric("Negócios", sum(1 for a in analisados if a["bom"]))
-    margens = [a["margem"] for a in analisados if a["bom"]]
-    c.metric("Melhor margem", euros(max(margens)) if margens else "—")
-    d.metric("Atualizado às", time.strftime("%H:%M:%S", time.localtime(s["ultima"])) if s["ultima"] else "—")
-    for origem, erro in s["erros"].items():
-        st.warning(f"{m.NOMES[origem]}: {erro}")
-    o1, o2 = st.columns([2, 3], vertical_alignment="bottom")
+    b.metric("Nos filtros", len(todos))
+    c.metric("Melhores (Telegram)", sum(1 for x in todos if x["bom"]),
+             help="Cumprem o critério do Telegram: muito abaixo de um valor de mercado fiável")
+    ultimo = s["db"].execute("SELECT MAX(visto_em) FROM anuncios").fetchone()[0]
+    d.metric("Último anúncio lido", datetime.fromisoformat(ultimo).astimezone().strftime("%H:%M:%S") if ultimo else "—")
+    for origem, erro in list(s["erros"].items()):
+        st.warning(f"{m.NOMES.get(origem, 'Mercado')}: {erro}")
+    o1, o2, o3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem")
-    so_negocios = o2.toggle("Só negócios (margem e desconto mínimos)", True, key="so_negocios")
-    escolhidos = [a for a in analisados if a["bom"]] if so_negocios else analisados
+    quantos = o2.selectbox("Mostrar", [24, 48, 96, 200], key="quantos")
+    so_melhores = o3.toggle("Só os melhores (critério do Telegram)", False, key="so_melhores")
+    escolhidos = [x for x in todos if x["bom"]] if so_melhores else todos
     bons = sorted(escolhidos, key=ORDENS[ordem])  # sort estável: "mais recente" mantém a ordem da base
 
     if not bons:
-        st.info("Ainda nenhum carro com esta margem. O mercado conhecido cresce a cada minuto; "
-                "experimenta baixar a margem ou o desconto na barra lateral.")
+        st.info("Nenhum carro com estes filtros. O mercado conhecido cresce sozinho; experimenta alargar os filtros.")
     else:
-        if any(x["suspeito"] for x in bons):
+        if any(x["suspeito"] for x in bons[:quantos]):
             st.warning("Preços a menos de metade do mercado: confirma documentos e nunca pagues sinal "
                        "antes de ver o carro.")
-        grelha(bons[:24], "bons")
-        with st.expander(f"Ver os {len(bons)} negócios em tabela"):
+        grelha(bons[:quantos], "bons")
+        with st.expander(f"Ver os {len(bons)} carros em tabela"):
             st.dataframe(
-                pd.DataFrame(bons)[["margem", "desconto", "preco", "mediana", "n", "modelo", "titulo", "ano", "km",
-                                    "combustivel", "local", "origem", "url"]],
-                hide_index=True, use_container_width=True,
+                pd.DataFrame(bons).assign(avaria=lambda d: d["avaria"].map(lambda v: ", ".join(v["itens"])))[
+                    ["margem", "desconto", "preco", "mediana", "venda", "n", "nivel", "pontuacao", "avaria",
+                                    "modelo", "titulo", "ano", "km", "cilindrada", "potencia", "combustivel",
+                                    "caixa", "local", "origem", "url"]],
+                hide_index=True, width="stretch",
                 column_config={"url": st.column_config.LinkColumn("anúncio", display_text="abrir"),
                                "margem": st.column_config.NumberColumn("margem", format="%d €"),
                                "preco": st.column_config.NumberColumn("preço", format="%d €"),
                                "mediana": st.column_config.NumberColumn("mercado", format="%d €"),
+                               "venda": st.column_config.NumberColumn("venda provável", format="%d €"),
+                               "nivel": st.column_config.TextColumn("comparado com"),
                                "desconto": st.column_config.NumberColumn("desconto", format="%d %%"),
                                "n": st.column_config.NumberColumn("comparáveis"),
                                "ano": st.column_config.NumberColumn(format="%d")})
 
     st.subheader("Acabados de chegar")
-    grelha(analisados[:8], "novos")
+    grelha(todos[:8], "novos")
 
 
 with negocios:
@@ -317,6 +345,36 @@ def lista_favoritos():
     grelha(anuncios, "fav", favorito=True)
 
 
+@st.fragment(run_every=ATUALIZAR_SEGUNDOS)
+def painel_toyota():
+    """Só Toyota (todos dentro dos filtros), separados em prontos a vender e com avaria."""
+    toyotas = sorted(analisados(marca="toyota"), key=ORDENS["Melhor negócio (pontuação)"])
+    prontos = [t for t in toyotas if not t["avaria"]["tem"]]
+    com_avaria = [t for t in toyotas if t["avaria"]["tem"]]
+    a, b, c, d = st.columns(4)
+    a.metric("Toyotas nos filtros", len(toyotas))
+    b.metric("Prontos a vender", len(prontos))
+    c.metric("Com avaria", len(com_avaria))
+    d.metric("Melhores (Telegram)", sum(1 for t in toyotas if t["bom"]),
+             help=f"Toyota com pelo menos {round(BASE['desconto_foco'] * 100)}% abaixo do mercado")
+    st.caption("Ordenados pela pontuação. Nos carros com avaria a margem não conta com a reparação: "
+               "confirma sempre com um mecânico antes de comprar.")
+    st.subheader(f"Prontos a vender ({len(prontos)})")
+    if prontos:
+        grelha(prontos[:48], "toy-ok")
+    else:
+        st.info("Nenhum Toyota pronto a vender com estes filtros, por agora.")
+    st.subheader(f"Com avaria ({len(com_avaria)})")
+    if com_avaria:
+        grelha(com_avaria[:48], "toy-rep")
+    else:
+        st.info("Nenhum Toyota com avaria com estes filtros, por agora.")
+
+
+with toyota_tab:
+    painel_toyota()
+
+
 with favoritos:
     lista_favoritos()
 
@@ -338,15 +396,16 @@ with mercado_tab:
                                            minimo=("preco", "min"), maximo=("preco", "max"),
                                            km_mediano=("km", "median")).reset_index()
         x, y = st.columns([2, 3])
-        x.dataframe(por_ano, hide_index=True, use_container_width=True,
+        x.dataframe(por_ano, hide_index=True, width="stretch",
                     column_config={**{c: st.column_config.NumberColumn(format="%d €")
                                       for c in ("mediana", "minimo", "maximo")},
                                    "ano": st.column_config.NumberColumn(format="%d"),
                                    "km_mediano": st.column_config.NumberColumn("km mediano", format="%d")})
         y.markdown(f"**{escolha.title()} — preço mediano por ano**")
-        y.line_chart(por_ano, x="ano", y="mediana", y_label="€", x_label="ano")
+        y.line_chart(por_ano.assign(ano=por_ano["ano"].astype(str)), x="ano", y="mediana", y_label="€",
+                     x_label="ano")  # texto: sem "2,015" no eixo
     st.markdown("**Modelos com mais anúncios**")
-    st.dataframe(resumo.head(100), hide_index=True, use_container_width=True,
+    st.dataframe(resumo.head(100), hide_index=True, width="stretch",
                  column_config={"preco_medio": st.column_config.NumberColumn("preço médio", format="%d €")})
 
 
@@ -374,7 +433,7 @@ with procura:
     st.caption("Lê agora o OLX, o Standvirtual e o Facebook para um modelo à tua escolha e junta-os ao mercado.")
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     texto = c1.text_input("Marca e modelo", "Toyota Yaris")
-    if c2.button("Pesquisar", type="primary", use_container_width=True) and texto.strip():
+    if c2.button("Pesquisar", type="primary", width="stretch") and texto.strip():
         st.session_state["pesquisa"] = texto.strip()
     if st.session_state.get("pesquisa"):
         partes = m.words(st.session_state["pesquisa"]).split()

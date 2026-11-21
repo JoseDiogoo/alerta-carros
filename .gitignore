@@ -8,3 +8,4 @@ __pycache__/
 nuvem.py
 test_nuvem.py
 pagina.py
+.venv/

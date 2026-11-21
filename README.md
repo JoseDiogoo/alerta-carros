@@ -2,13 +2,33 @@
 
 Encontra os carros mais baratos face ao **valor de mercado** em Portugal, estima a **margem de lucro** e avisa no Telegram, sem serviços pagos.
 
-Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**. Não há lista fixa de carros: o modelo é detetado no título (marca + modelo, com as versões desportivas à parte) e cada anúncio é comparado com a mediana do mesmo modelo, ano ±1 e km parecidos.
+Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**, todos em paralelo: cada site de 15 em 15 segundos e o Facebook (7 cidades) de 3 em 3 minutos. Não há lista fixa de carros: o modelo é detetado no título (marca + modelo, com as versões desportivas à parte e erros de escrita corrigidos).
 
-**Margem estimada = valor de mercado − preço − custos de revenda.** São preços pedidos e não preços de venda, por isso a margem real tende a ser um pouco menor.
+## Como é avaliado cada carro
 
-- `monitor.py` corre no PC, verifica os sites de minuto a minuto e envia os alertas para o grupo do Telegram, com foto, preço, ano, km, margem, valor de mercado e link. Também lê, aos poucos, páginas mais antigas para conhecer o mercado inteiro (cerca de 45 mil carros no Standvirtual).
-- `app.py` é o painel Streamlit em modo escuro, com os melhores negócios por margem, os favoritos, os preços de mercado por modelo e ano e a pesquisa por modelo. Tem filtros de marca, modelo, combustível, caixa, preço, ano, km, vendedor, site, zona, custos, margem e desconto.
-- `config.toml` guarda os critérios por defeito. `modelos = []` significa todos os carros. Para começar, copia `config.exemplo.toml`.
+1. **Comparáveis rigorosos.** O carro é comparado com o mesmo modelo e combustível, ano ±2 e km parecidos. Primeiro procura carros com a mesma cilindrada, potência e caixa, e só alarga a comparação se houver poucos. O mesmo carro publicado em vários sites conta uma só vez.
+2. **Preços ajustados.** O preço de cada comparável é ajustado à diferença de ano e de km. A desvalorização por ano e por km é aprendida dos anúncios de cada modelo.
+3. **Preços absurdos removidos** (peças, erros), seguidos da mediana.
+4. **Valor prudente.** Quando a comparação é fraca (sem km, poucos carros iguais, preços muito variáveis), usa-se um valor mais baixo do mercado (o percentil 30) em vez da mediana. Se o mercado for demasiado disperso, não há alerta.
+5. **Página completa.** Nos candidatos a negócio é lida a página do anúncio: descrição, km, combustível, caixa, donos, garantia e 2.ª chave.
+6. **Avarias.** A descrição é lida e as avarias mencionadas (embraiagem, turbo, motor, chapa…) aparecem com a etiqueta **⚠ AVARIA**. O custo da reparação **não é estimado** (só um mecânico o sabe) e a avaria não tira pontos: a margem é a do carro como se estivesse bom. Só são excluídos os carros para peças, salvados, com penhora, sem documentos ou com matrícula estrangeira.
+
+**Margem = valor de mercado × 0,95 (venda provável) − preço − custos de revenda.**
+
+## O que vai para o Telegram
+
+O painel mostra **todos** os carros dentro dos filtros (até 5 000 €). O Telegram só recebe os melhores:
+
+- preço **pelo menos 30% abaixo** do valor de mercado (**15%** nas `marcas_foco`, por defeito Toyota);
+- valor de mercado tirado de **pelo menos 10 carros iguais**, com preços pouco dispersos;
+- **pontuação ≥ 75** (preço face ao mercado, km, descrição, donos, garantia…);
+- os carros com avaria também podem ir, com "⚠️ AVARIA: …" na mensagem.
+
+## Ficheiros
+
+- `monitor.py` corre no PC, vigia os 6 sites e envia os bons negócios para o Telegram, com foto, preço, motor, km, margem, avarias mencionadas, valor de mercado e link. Também lê aos poucos páginas mais antigas, sobretudo até ao dobro do preço máximo e das marcas em foco, para conhecer o mercado.
+- `app.py` é o painel Streamlit com os separadores **Melhores negócios** (todos os carros, ordenados pela pontuação, com a opção de ver só os do critério do Telegram), **Toyota** (prontos a vender e com avaria), **Favoritos**, **Mercado** e **Pesquisar modelo**. Atualiza-se a cada 15 segundos, com a recolha a correr em segundo plano.
+- `config.toml` guarda os critérios. Se não existir, é usado o `config.exemplo.toml`. `modelos = []` significa todos os carros. `desconto_telegram`, `desconto_foco`, `comparaveis_telegram` e `pontuacao_minima` definem o critério do Telegram.
 
 Os pormenores técnicos de cada fonte estão em [PESQUISA.md](PESQUISA.md).
 
@@ -18,8 +38,6 @@ Os pormenores técnicos de cada fonte estão em [PESQUISA.md](PESQUISA.md).
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-Na primeira abertura, o painel junta preços de referência durante cerca de 2 minutos. Depois atualiza-se sozinho a cada minuto.
 
 ## Alertas no Telegram (24/7 no PC)
 
@@ -31,14 +49,15 @@ TELEGRAM_CHAT_ID = "-5586087955"
 ```
 
 ```powershell
-Copy-Item config.exemplo.toml config.toml
 python monitor.py --test-telegram   # a mensagem de teste deve chegar ao grupo
-python monitor.py
+.\iniciar_monitor.bat               # vigia sem parar e reinicia sozinho se cair
 ```
 
-Na primeira execução, o monitor guarda os anúncios existentes como referência e não envia nada. A partir daí, cada anúncio novo, ou cada descida de preço de pelo menos 5%, que cumpra os filtros dá um alerta. Se o envio falhar, o anúncio volta a ser tentado no ciclo seguinte. O mesmo carro publicado em dois sites só gera um alerta.
+Para arrancar com o Windows, põe um atalho para o `iniciar_monitor.bat` na pasta que abre com `Win+R` → `shell:startup`. Nas opções de energia, desliga a suspensão do PC.
 
-Para receber alertas em tempo real, o monitor tem de correr numa máquina com ligação de casa. O Facebook costuma bloquear os servidores na nuvem.
+Na primeira execução, o monitor guarda os anúncios existentes como referência e não envia nada. A partir daí, cada anúncio novo, ou cada descida de preço de pelo menos 5%, que cumpra os critérios dá um alerta. Se o envio falhar, o anúncio volta a ser tentado no ciclo seguinte. O mesmo carro publicado em dois sites só gera um alerta. Se um site bloquear ou falhar, o monitor espera cada vez mais tempo antes de lá voltar (até 10 minutos), sem afetar os outros sites.
+
+O workflow do GitHub Actions (`.github/workflows/alertas.yml`) corre de 30 em 30 minutos, com uma base de dados própria. Se o monitor estiver a correr no PC ao mesmo tempo, o mesmo carro pode dar dois alertas.
 
 ## Testes
 
@@ -48,4 +67,4 @@ python -B -m unittest test_monitor -v
 
 ## Aviso
 
-A recolha automática pode violar os termos de utilização destes sites. Usa isto só para fins pessoais e com moderação. Antes de pagar, confirma sempre o carro e os documentos ao vivo. Desconfia de preços muito abaixo do mercado e de pedidos de sinal.
+A recolha automática pode violar os termos de utilização destes sites. Usa isto só para fins pessoais e com moderação. Antes de pagar, confirma sempre o carro e os documentos ao vivo, e leva um mecânico para confirmar o custo das reparações. Desconfia de preços muito abaixo do mercado e de pedidos de sinal.

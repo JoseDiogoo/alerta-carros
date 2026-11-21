@@ -1,6 +1,6 @@
 # Alerta Carros — critérios de negócio. Todos os valores são editáveis; no painel também mudam ao vivo.
 
-intervalo_segundos = 60        # pausa entre ciclos (mínimo 30)
+intervalo_segundos = 15        # cada site é lido de 15 em 15 s, todos em paralelo (mínimo 10)
 paginas_max = 5                # páginas lidas por site até encontrar um anúncio já visto
 paginas_semente = 15           # páginas antigas lidas no arranque para conhecer o mercado
 paginas_exploracao = 3         # páginas antigas extra por ciclo e por site (o mercado cresce sozinho)
@@ -8,38 +8,45 @@ paginas_exploracao = 3         # páginas antigas extra por ciclo e por site (o 
 # Que carros procurar
 modelos = []                   # vazio = TODOS os carros. Ex.: ["toyota yaris", "vw golf"] para restringir
 preco_min = 300
-preco_max = 5000 
+preco_max = 5000
 ano_min = 2005
 km_max = 250000
 km_ano_max = 20000             # média de km por ano de idade
 apenas_nacionais = false
 
-# Negócio: valor de mercado = mediana do mesmo modelo, ano ±1 e km parecidos, em todos os sites
+# Valor de mercado = mediana de carros iguais (modelo, combustível, motor, caixa, ano ±2, km parecidos),
+# com cada preço ajustado à diferença de ano e km. Margem = valor × fator_venda − preço − custos_revenda
+# (num carro com avaria a margem é a do carro como se estivesse bom: a reparação não é estimada).
 custos_revenda = 500           # inspeção, limpeza, pequenas reparações, anúncio (€)
-margem_minima = 800            # lucro estimado mínimo para alertar (€)
-pontuacao_minima = 60          # avaliação 0-100 (mercado, km, descrição, donos, garantia...)
-alertar_todos = false          # true = Telegram recebe TODOS os anúncios novos dentro dos filtros
-max_alertas_todos = 40         # máximo desses alertas por execução (30 em 30 min)
-desconto_mercado = 0.85        # e preço ≤ 85% do valor de mercado
+fator_venda = 0.95             # os anúncios são preços pedidos: a venda real fica ~5% abaixo
 min_comparaveis = 6            # anúncios necessários para estimar o valor
 limite_burla = 0.5             # < 50% do mercado → alerta com aviso
+limite_irreal = 0.35           # < 35% do mercado → ignorado (burla, erro no preço ou prestação)
 descida_minima = 0.05          # anúncio já visto que baixe ≥ 5% volta a ser avaliado
 
+# Telegram: só os melhores negócios (o painel mostra todos os carros dentro dos filtros)
+desconto_telegram = 0.30       # preço pelo menos 30% abaixo do valor de mercado
+desconto_foco = 0.15           # nas marcas_foco (Toyota) basta 15% abaixo
+comparaveis_telegram = 10      # valor de mercado tirado de pelo menos 10 carros iguais
+pontuacao_minima = 75          # avaliação 0-100 (mercado, km, descrição, donos, garantia...); avarias não tiram pontos
+marcas_foco = ["toyota"]       # critério mais solto no Telegram, aba própria no painel e mercado lido mais a fundo
+alertar_todos = false          # true = Telegram recebe TODOS os anúncios novos dentro dos filtros
+max_alertas_todos = 40         # máximo desses alertas por cada 30 min
+
 fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]
-facebook_cidades = ["lisbon", "porto"]
+facebook_cidades = ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"]
 facebook_pesquisas = ["carro"] # usado quando a lista de modelos está vazia
-facebook_cada_minutos = 10
+facebook_cada_minutos = 3
 facebook_faixas = 3            # o Facebook devolve 24 por pesquisa: divide o preço em faixas
 
-# Palavras no título que excluem o anúncio
+# Carros com avaria NÃO são excluídos: aparecem com a etiqueta AVARIA (sem estimar o custo).
+# Palavras no título que excluem o anúncio (só o que não se resolve com uma reparação)
 excluir = [
-  "para peças", "peças", "avariado", "sinistrado", "batido", "motor partido",
-  "acidentado", "danificado", "damaged", "salvado",
+  "para peças", "peças", "salvado", "damaged",
   "retoma", "sinal", "entrada", "prestação", "prestações", "mensalidade", "aluguer",
   "troco", "procuro", "compro",
 ]
-# Palavras procuradas também na descrição (avarias e documentos)
+# Palavras procuradas também na descrição (documentos e legalização)
 excluir_texto = [
-  "para peças", "avariado", "motor partido", "sinistrado", "sem documentos",
-  "sem matricula", "matricula estrangeira", "não anda", "precisa de motor",
+  "para peças", "sem documentos", "sem matricula", "matricula estrangeira",
 ]
