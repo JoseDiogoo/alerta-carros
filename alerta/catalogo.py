@@ -4,17 +4,23 @@
    esses valores são a referência ("site").
 2. O catálogo é o conjunto de pares marca/modelo que esses dois sites usam, aprendido da própria base.
 3. Os outros anúncios (CustoJusto, Facebook, AutoX, Auto.pt) só recebem um modelo se o texto contiver
-   exatamente uma marca e um modelo do catálogo ("catalogo"). Na dúvida, o modelo fica desconhecido (None):
+   exatamente uma marca e um modelo do catálogo ("catalogo"). As abreviaturas da marca ("VW") também se
+   aprendem desses anúncios. Na dúvida, o modelo fica desconhecido (None):
    o carro aparece no painel, mas não entra no valor de mercado nem dá alerta.
 """
 
+import re
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 
 from .texto import words
 
 FONTES_REFERENCIA = ("standvirtual", "olx")  # dão marca e modelo em campos, com a mesma nomenclatura
 CACHE_SEGUNDOS = 600
+# abreviatura aprendida: 1.ª palavra do título em pelo menos ALIAS_MINIMO anúncios do Standvirtual/OLX,
+# e em pelo menos ALIAS_CERTEZA deles com a mesma marca do site (ex.: "VW Golf" -> volkswagen)
+ALIAS_MINIMO = 5
+ALIAS_CERTEZA = 0.95
 _CACHE = {}  # caminho da base -> (quando, Catalogo)
 
 
@@ -42,8 +48,27 @@ def _posicao(tokens, seq, sufixo=False):
     return False
 
 
+def aprender_abreviaturas(titulos):
+    """Como os vendedores escrevem a marca, aprendido dos anúncios em que o site diz a marca.
+
+    titulos: [(marca do site, título)]. Devolve {palavra: marca} só para palavras frequentes e quase
+    sempre da mesma marca; nada é escrito à mão.
+    """
+    contagem = defaultdict(Counter)
+    for marca, titulo in titulos:
+        palavras = [t for t in words(titulo).split() if not re.fullmatch(r"(19|20)\d\d", t)]
+        if palavras and marca:
+            contagem[palavras[0]][marca] += 1
+    aprendidas = {}
+    for palavra, marcas in contagem.items():
+        marca, n = marcas.most_common(1)[0]
+        if n >= ALIAS_MINIMO and n / sum(marcas.values()) >= ALIAS_CERTEZA:
+            aprendidas[palavra] = marca
+    return aprendidas
+
+
 class Catalogo:
-    def __init__(self, chaves):
+    def __init__(self, chaves, titulos=()):
         self.modelos = {}  # marca -> [(palavras do modelo, modelo)]
         for k in chaves:
             marca, modelo = k.split(" ", 1)
@@ -53,6 +78,8 @@ class Catalogo:
         self.marcas = [(m.split("-"), m) for m in self.modelos]
         self.marcas += [([m.split("-")[0]], m) for m in self.modelos
                         if "-" in m and primeiras[m.split("-")[0]] == 1]
+        self.abreviaturas = {p: m for p, m in aprender_abreviaturas(titulos).items() if m in self.modelos}
+        self.marcas += [([p], m) for p, m in self.abreviaturas.items()]
 
     def marca(self, texto):
         tokens = words(texto).split()
@@ -76,8 +103,9 @@ def catalogo(db):
     guardado = _CACHE.get(base) if base else None
     if guardado and time.monotonic() - guardado[0] < CACHE_SEGUNDOS:
         return guardado[1]
-    cat = Catalogo(r[0] for r in db.execute(
-        "SELECT DISTINCT modelo FROM anuncios WHERE modelo_fonte = 'site' AND modelo IS NOT NULL"))
+    linhas = db.execute("SELECT modelo, marca, titulo FROM anuncios "
+                        "WHERE modelo_fonte = 'site' AND modelo IS NOT NULL").fetchall()
+    cat = Catalogo({r[0] for r in linhas}, [(r[1], r[2]) for r in linhas])
     if base:
         _CACHE[base] = (time.monotonic(), cat)
     return cat

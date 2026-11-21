@@ -66,6 +66,14 @@ class MonitorTest(unittest.TestCase):
         self.assertIsNone(cj("Toyota Corola 1.4"))  # erro de escrita: não se adivinha
         self.assertIsNone(cj("Trotinete elétrica Xiaomi"))
         self.assertEqual(cj("Yaris 1.0", marca="Toyota"), "toyota yaris")  # marca dada pelo site (AutoX, Auto.pt)
+        # abreviaturas aprendidas dos títulos em que o site diz a marca
+        titulos = [("volkswagen", f"VW Golf {i}") for i in range(6)] + [("volkswagen", "Volkswagen Polo")]
+        titulos += [(m, "Vendo carro") for m in ("toyota", "bmw", "citroen", "volkswagen", "kia", "opel")]
+        cat = Catalogo(["volkswagen golf", "volkswagen jetta", "toyota yaris"], titulos)
+        self.assertEqual(cat.abreviaturas, {"vw": "volkswagen"})  # "vendo" aparece com várias marcas: não
+        self.assertEqual(cj("VW Jetta 1.9 TDI"), "volkswagen jetta")
+        poucos = Catalogo(["volkswagen jetta"], [("volkswagen", "VW Golf")] * 4)  # menos de 5: não aprende
+        self.assertEqual(poucos.abreviaturas, {})
 
     def test_alertar_todos_nao_duplica(self):
         self.config["alertar_todos"] = True
