@@ -42,7 +42,7 @@ def ano_do_texto(texto):
     """Primeiro ano plausível do texto. Ignora o futuro, cilindradas ("2000cc") e datas de inspeção/seguro/IUC."""
     from datetime import date
     texto = texto or ""
-    for match in re.finditer(r"\b(19[89]\d|20[0-3]\d)\b", texto):
+    for match in re.finditer(r"\b(19[6-9]\d|20[0-3]\d)\b", texto):
         antes = texto[max(0, match.start() - 25):match.start()].casefold()
         depois = texto[match.end():match.end() + 4].casefold().strip()
         if (int(match.group()) <= date.today().year and not depois.startswith(("cc", "cv", "km", "€", "eur"))

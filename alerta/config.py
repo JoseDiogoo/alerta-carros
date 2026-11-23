@@ -23,7 +23,7 @@ def secret(name):
 
 PADROES = {
     "intervalo_segundos": 15, "paginas_max": 5, "paginas_semente": 15, "paginas_exploracao": 3,
-    "preco_min": 300, "preco_max": 15000, "ano_min": 2005, "km_max": 250000, "km_ano_max": 20000,
+    "preco_min": 300, "preco_max": 15000, "ano_min": 1960, "km_max": 250000, "km_ano_max": 20000,
     "desconto_telegram": 0.30, "desconto_foco": 0.15, "comparaveis_telegram": 10,
     "limite_burla": 0.5, "limite_irreal": 0.35, "min_comparaveis": 6, "descida_minima": 0.05,
     "custos_revenda": 500, "fator_venda": 0.95, "retencao_dias": 60, "preco_max_guardar": 15000,

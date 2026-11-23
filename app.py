@@ -178,7 +178,7 @@ with st.sidebar:
     f["preco"] = st.slider("Preço (€)", 300, PRECO_TETO, (entre(BASE["preco_min"], 300, PRECO_TETO - 100),
                                                          entre(BASE["preco_max"], 400, PRECO_TETO)), 100,
                            key="f_preco")
-    f["ano"] = st.slider("Ano", 1995, ANO_MAX, (entre(BASE["ano_min"], 1995, ANO_MAX), ANO_MAX), key="f_ano")
+    f["ano"] = st.slider("Ano", 1960, ANO_MAX, (entre(BASE["ano_min"], 1960, ANO_MAX), ANO_MAX), key="f_ano")
     f["km"] = st.slider("Km máximos", 10000, 400000, entre(BASE["km_max"], 10000, 400000), 10000, key="f_km")
     todos_modelos = modelos_conhecidos()
     marcas = st.multiselect("Marca", com_escolhidos(marcas_conhecidas(), "f_marcas"),
