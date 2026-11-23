@@ -48,8 +48,15 @@ def avaliar(db, anuncio, config):
     """Análise, se o carro for dos melhores negócios (vai para o Telegram); senão None."""
     if not (interessa(anuncio, config) and dentro_dos_limites(anuncio, config)):
         return None
+    if apenas_foco(config) and not de_foco(anuncio, config):
+        return None  # Telegram só para as marcas em foco (Toyota); as outras ficam só no painel
     analise = analisar(db, anuncio, config)
     return analise if melhor(anuncio, analise, config) else None
+
+
+def apenas_foco(config):
+    """O Telegram só avisa das marcas em foco? (sem marcas_foco não há filtro)"""
+    return bool(config["so_foco_telegram"] and config["marcas_foco"])
 
 
 def de_foco(anuncio, config):

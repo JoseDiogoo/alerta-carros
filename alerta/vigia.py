@@ -16,7 +16,7 @@ from .fontes import PAGINADAS, detalhe
 from .fontes.facebook import SessaoFacebook, facebook
 from .fontes.olx import olx
 from .fontes.standvirtual import standvirtual
-from .negocio import avaliar, candidato, interessa
+from .negocio import apenas_foco, avaliar, candidato, de_foco, interessa
 from .telegram import mensagem, mensagem_simples, send
 from .texto import words
 
@@ -56,7 +56,7 @@ def processar(db, anuncio, config, referencia):
             if analise:
                 if not duplicado(db, anuncio):  # o mesmo carro já alertado noutro site
                     alert = mensagem(anuncio, analise, old_price if dropped else None)
-            elif config["alertar_todos"] and row is None and ENVIADOS_TODOS[0] < config["max_alertas_todos"]:
+            elif config["alertar_todos"] and row is None and (not apenas_foco(config) or de_foco(anuncio, config)) and ENVIADOS_TODOS[0] < config["max_alertas_todos"]:
                 ENVIADOS_TODOS[0] += 1  # ponytail: teto por janela de 30 min para o Telegram não bloquear o bot
                 alert = mensagem_simples(anuncio)
             if alert:

@@ -361,14 +361,14 @@ def grelha(anuncios, prefixo, colunas=4, favorito=False, limite=24):
 
 # ---------- página ----------
 
-st.markdown('<div class="hero"><h1>Alerta <span>Carros</span></h1><p>Os carros mais baratos face ao valor de '
+st.markdown('<div class="hero"><h1>Alerta <span>Carros</span></h1><p>Foco em Toyota: os mais baratos face ao valor de '
             'mercado em Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace, com margem de lucro '
             f'estimada e atualização a cada {ATUALIZAR_SEGUNDOS} segundos.</p></div>', unsafe_allow_html=True)
 if aviso := st.session_state.pop("aviso", None):
     st.toast(aviso)
 
-negocios, toyota_tab, favoritos, mercado_tab, procura = st.tabs(
-    ["Melhores negócios", "Toyota", "Favoritos", "Mercado", "Pesquisar modelo"])
+toyota_tab, negocios, favoritos, mercado_tab, procura = st.tabs(
+    ["Toyota (foco)", "Outras marcas", "Favoritos", "Mercado", "Pesquisar modelo"])
 
 
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)

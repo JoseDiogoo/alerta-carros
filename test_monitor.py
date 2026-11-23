@@ -82,7 +82,20 @@ class MonitorTest(unittest.TestCase):
         self.ciclo("standvirtual", p1=[yaris("ref", 6000, origem="standvirtual")])
         self.assertEqual(self.ciclo("standvirtual", p1=[yaris("a2", 4000, origem="standvirtual")]), [])
 
+    def test_telegram_so_da_marca_em_foco(self):
+        clio = lambda id, preco: carro("olx", id, "Renault Clio 1.2", preco, f"https://exemplo/{id}",
+                                       ano=2012, km=120000, marca="renault", modelo_site="clio")
+        self.config["marcas_foco"] = ["toyota"]
+        self.ciclo(p1=[yaris(f"m{i}", 6000 + i * 10) for i in range(10)]
+                   + [clio(f"c{i}", 6000 + i * 10) for i in range(10)])
+        alertas = self.ciclo(p1=[clio("clio", 3800), yaris("yaris", 3800)])
+        self.assertEqual(len(alertas), 1, alertas)  # só o Toyota; o Clio fica só no painel
+        self.assertIn("Yaris", alertas[0])
+        self.config["so_foco_telegram"] = False  # e com o filtro desligado o Clio também avisa
+        self.assertEqual(len(self.ciclo(p1=[clio("clio2", 3800)])), 1)
+
     def test_avariados_entram_com_etiqueta(self):
+        self.config["so_foco_telegram"] = False  # (todas as marcas: o filtro Toyota tem teste próprio)
         clio = lambda id, preco, **e: carro("olx", id, "Renault Clio 1.2", preco, f"https://exemplo/{id}",
                                             ano=2012, km=120000, marca="renault", modelo_site="clio", **e)
         self.ciclo(p1=[yaris(f"m{i}", 6000 + i * 10) for i in range(10)]

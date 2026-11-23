@@ -27,7 +27,7 @@ PADROES = {
     "desconto_telegram": 0.30, "desconto_foco": 0.15, "comparaveis_telegram": 10,
     "limite_burla": 0.5, "limite_irreal": 0.35, "min_comparaveis": 6, "descida_minima": 0.05,
     "custos_revenda": 500, "fator_venda": 0.95, "retencao_dias": 60, "preco_max_guardar": 15000,
-    "marcas_foco": ["toyota"], "pontuacao_minima": 75, "alertar_todos": False, "max_alertas_todos": 40,
+    "marcas_foco": ["toyota"], "so_foco_telegram": True, "pontuacao_minima": 75, "alertar_todos": False, "max_alertas_todos": 40,
     "apenas_nacionais": False, "modelos": [], "excluir": [], "excluir_texto": [],
     "fontes": ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"],
     "facebook_cidades": ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"],

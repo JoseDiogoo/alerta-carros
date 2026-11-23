@@ -33,6 +33,7 @@ desconto_telegram = 0.30       # preço pelo menos 30% abaixo do valor de mercad
 desconto_foco = 0.15           # nas marcas_foco (Toyota) basta 15% abaixo
 comparaveis_telegram = 10      # valor de mercado tirado de pelo menos 10 carros iguais
 pontuacao_minima = 75          # avaliação 0-100 (mercado, km, descrição, donos, garantia...); avarias não tiram pontos
+so_foco_telegram = true        # true = o Telegram só avisa das marcas_foco (qualquer site); as outras marcas ficam só no painel
 marcas_foco = ["toyota"]       # critério mais solto no Telegram, aba própria no painel e mercado lido mais a fundo
 alertar_todos = false          # true = Telegram recebe TODOS os anúncios novos dentro dos filtros
 max_alertas_todos = 40         # máximo desses alertas por cada 30 min
