@@ -43,6 +43,7 @@ jobs:
           gh release view dados --repo "${{ github.repository }}" >/dev/null 2>&1 || \
             gh release create dados --repo "${{ github.repository }}" --title "Base de dados" \
               --notes "Base SQLite publicada pela vigia de 5 em 5 min (só anúncios públicos)."
+          gh release delete-asset dados publicar.sqlite3 --repo "${{ github.repository }}" -y 2>/dev/null || true
           gh release download dados --repo "${{ github.repository }}" -p base.sqlite3 -O config.sqlite3 --clobber \
             || echo "Sem base publicada ainda: usa a da cache."
 

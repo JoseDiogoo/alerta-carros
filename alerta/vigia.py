@@ -266,12 +266,14 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
 def publicar(caminho):
     """Checkpoint: cópia coerente da base para o GitHub Release "dados" (sobrevive a um runner cancelado e é
     o que o painel lê). Só corre se PUBLICAR_BASE estiver definido (GitHub Actions)."""
-    copia = caminho.with_name("publicar.sqlite3")
+    pasta = caminho.parent / "publicar"
+    pasta.mkdir(exist_ok=True)
+    copia = pasta / "base.sqlite3"  # o nome do ficheiro é o nome do ficheiro no Release
     with sqlite3.connect(caminho, timeout=60) as origem, sqlite3.connect(copia) as destino:
         origem.backup(destino)  # cópia consistente com as threads a escrever
         destino.execute("PRAGMA journal_mode = DELETE")  # sem ficheiros -wal: abre-se só para leitura
     try:  # falhar a publicar nunca pára a vigia: tenta outra vez daqui a 30 min
-        resultado = subprocess.run(["gh", "release", "upload", "dados", f"{copia}#base.sqlite3", "--clobber"],
+        resultado = subprocess.run(["gh", "release", "upload", "dados", str(copia), "--clobber"],
                                    capture_output=True, text=True, timeout=300)
         erro = resultado.stderr.strip()[:200] if resultado.returncode else None
     except (OSError, subprocess.TimeoutExpired) as error:
