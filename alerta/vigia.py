@@ -226,7 +226,10 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
         inicio = time.monotonic()
         try:
             if origem == "verificar":
-                verificar(db, config)
+                removidos = verificar(db, config)
+                if removidos:
+                    print(f"{datetime.now():%H:%M:%S} Verificação: {removidos} anúncios eliminados dos sites "
+                          "(deixam de aparecer no painel)", flush=True)
             elif origem == "mercado":
                 explorar(db, config)
                 if time.monotonic() - limpeza > 6 * 3600:  # regras da base também numa vigia longa (painel)

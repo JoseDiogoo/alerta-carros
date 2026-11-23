@@ -375,8 +375,9 @@ def painel():
     total = s["db"].execute("SELECT COUNT(*) FROM anuncios").fetchone()[0]
     a.metric("Carros conhecidos", f"{total:,}".replace(",", " "))
     b.metric("Nos filtros", len(todos))
-    c.metric("Melhores (Telegram)", sum(1 for x in todos if x["bom"]),
-             help="Cumprem o critério do Telegram: muito abaixo de um valor de mercado fiável")
+    c.metric("Bons negócios", sum(1 for x in todos if x["bom"]),
+             help="Mesmo critério do Telegram (muito abaixo de um valor de mercado fiável), de todas as marcas. "
+                  "O Telegram só avisa das marcas em foco (Toyota).")
     ultimo = s["db"].execute("SELECT MAX(atualizado_em) FROM anuncios").fetchone()[0]
     d.metric("Último anúncio lido", datetime.fromisoformat(ultimo).astimezone().strftime("%H:%M:%S") if ultimo else "—")
     for origem, erro in list(s["erros"].items()):
@@ -398,7 +399,7 @@ def painel():
     o1, o2, o3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem")
     quantos = o2.selectbox("Mostrar", [24, 48, 96, 200], key="quantos")
-    so_melhores = o3.toggle("Só os melhores (critério do Telegram)", False, key="so_melhores")
+    so_melhores = o3.toggle("Só os bons negócios (critério do Telegram, todas as marcas)", False, key="so_melhores")
     escolhidos = [x for x in todos if x["bom"]] if so_melhores else todos
     bons = sorted(escolhidos, key=ORDENS[ordem])  # sort estável: "mais recente" mantém a ordem da base
 
