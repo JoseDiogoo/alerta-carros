@@ -130,7 +130,7 @@ ORDENS = {
     "Mais caro": lambda a: -a["preco"],
     "Menos quilómetros": lambda a: a["km"] or 10**9,
     "Mais novo": lambda a: -(a["ano"] or 0),
-    "Mais recente no site": lambda a: 0,
+    "Publicados mais recentemente": lambda a: 0,  # ordem da base: visto_em (1.ª vez que a vigia o viu)
 }
 
 
