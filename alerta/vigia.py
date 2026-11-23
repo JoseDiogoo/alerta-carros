@@ -241,7 +241,7 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
             else:
                 total, referencia = (ciclo_facebook(db, config, so_guardar) if origem == "facebook"
                                      else ciclo_paginado(db, origem, config, so_guardar))
-                if not so_guardar and (ciclos == 0 or referencia or falhas):
+                if not so_guardar and (ciclos == 0 or referencia or falhas or origem == "facebook"):  # Facebook: uma linha por volta
                     print(f"{datetime.now():%H:%M:%S} {NOMES[origem]}: {total} anúncios lidos"
                           + (" (referência inicial)" if referencia else ""), flush=True)
             falhas = 0
