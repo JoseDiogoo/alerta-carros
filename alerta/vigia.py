@@ -258,12 +258,15 @@ def vigiar_tudo(caminho, config, minutos=None):
           f"(de {config['intervalo_segundos']} em {config['intervalo_segundos']} s; "
           f"Facebook de {config['facebook_cada_minutos']} em {config['facebook_cada_minutos']} min).", flush=True)
     try:
+        tique = 0
         while fim is None or time.monotonic() < fim:
-            parar.wait(1800 if fim is None else min(1800, max(1, fim - time.monotonic())))
-            with ALERTA:
-                ENVIADOS_TODOS[0] = 0  # max_alertas_todos vale por cada 30 min
+            parar.wait(300 if fim is None else min(300, max(1, fim - time.monotonic())))
+            tique += 1
+            if tique % 6 == 0:  # max_alertas_todos vale por cada 30 min
+                with ALERTA:
+                    ENVIADOS_TODOS[0] = 0
             if os.environ.get("PUBLICAR_BASE"):
-                publicar(caminho)  # de 30 em 30 min
+                publicar(caminho)  # checkpoint de 5 em 5 min: o painel está sempre a ≤5 min do Telegram
     finally:
         parar.set()
         for thread in threads:
