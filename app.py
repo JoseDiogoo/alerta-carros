@@ -1,7 +1,7 @@
 """Alerta Carros — os melhores negócios de carros em Portugal, com margem estimada, em tempo real."""
 
+import sqlite3
 import threading
-from concurrent.futures import ThreadPoolExecutor
 import time
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -12,14 +12,10 @@ import streamlit as st
 from alerta import avaliacao as av
 from alerta.anuncio import NOMES, carro, completar_motor
 from alerta.config import ROOT, load_config
-from alerta.db import abrir_db, limpar
-from alerta.fontes import facebook, olx, standvirtual
-from alerta.fontes.http import ainda_existe
+from alerta import base_remota
 from alerta.mercado import analisar as analisar_mercado
 from alerta.negocio import excluido, melhor
-from alerta.catalogo import identificar
 from alerta.texto import euros, words
-from alerta.vigia import processar, semear, vigiar
 
 st.set_page_config(page_title="Alerta Carros", layout="wide")
 st.markdown("""
@@ -73,29 +69,54 @@ COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto
 CAMINHO_DB = ROOT / "painel.sqlite3"
 
 
-# ---------- recolha em segundo plano, partilhada por todas as sessões ----------
+# ---------- dados: a vigia (GitHub Actions) recolhe, o painel só lê ----------
 
-def recolha_continua(s):
-    """Junta o mercado e depois lê todos os sites em paralelo, sem parar (sem alertas: isso é o monitor)."""
-    db = abrir_db(CAMINHO_DB)
-    semear(db, {**BASE, "paginas_semente": 8}, aviso=lambda *_: None)
-    db.close()
-    s["semeado"] = True
-    for origem in [*FONTES, "mercado"]:
-        threading.Thread(target=vigiar, args=(origem, CAMINHO_DB, BASE, threading.Event()),
-                         kwargs={"so_guardar": True, "erros": s["erros"]}, daemon=True).start()
+PASTA = ROOT / ".dados"
+VERIFICAR_BASE_SEGUNDOS = 120  # a vigia publica de 5 em 5 min; o painel vê se há nova de 2 em 2
+CAMINHO_FAVORITOS = PASTA / "favoritos.sqlite3"  # disco da Streamlit Cloud: perde-se nos reinícios
 
 
 @st.cache_resource
+def _estado():
+    PASTA.mkdir(exist_ok=True)
+    fav = sqlite3.connect(CAMINHO_FAVORITOS, check_same_thread=False)
+    fav.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
+                "guardado_em TEXT, PRIMARY KEY (origem, id))")
+    fav.commit()
+    return {"db": None, "fav": fav, "versao": None, "verificada": 0.0, "erros": {}, "lock": threading.Lock()}
+
+
 def estado():
-    esquema = 7  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
-    db = abrir_db(CAMINHO_DB, check_same_thread=False)
-    db.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
-               "guardado_em TEXT, PRIMARY KEY (origem, id))")
-    db.commit()
-    limpar(db, BASE)
-    s = {"db": db, "erros": {}, "semeado": False}
-    threading.Thread(target=recolha_continua, args=(s,), daemon=True).start()
+    """Liga à base mais recente da vigia (muda a cada ≤5 min), sem nunca escrever nela."""
+    s = _estado()
+    if s["db"] and time.time() - s["verificada"] < VERIFICAR_BASE_SEGUNDOS:
+        return s
+    if not s["lock"].acquire(blocking=s["db"] is None):
+        return s  # outra sessão já está a atualizar
+    try:
+        nova = base_remota.versao()
+        if nova and nova != s["versao"]:
+            try:
+                with st.spinner("A descarregar a base de dados mais recente da vigia…"):
+                    s["db"] = base_remota.descarregar(PASTA / f"base-{int(time.time())}.sqlite3")
+                s["versao"] = nova
+                s["erros"].pop("base", None)
+                for velho in sorted(PASTA.glob("base-*.sqlite3"))[:-2]:  # guarda as 2 últimas (sessões em curso)
+                    velho.unlink(missing_ok=True)
+            except (OSError, ValueError, sqlite3.Error) as erro:
+                s["erros"]["base"] = f"não consegui descarregar a base ({erro})"
+        elif not nova and not s["db"]:
+            s["erros"]["base"] = "a vigia ainda não publicou a base (Release 'dados')"
+        s["verificada"] = time.time()
+    finally:
+        s["lock"].release()
+    if not s["db"]:
+        localmente = ROOT / "painel.sqlite3"  # desenvolvimento: base local, se existir
+        if localmente.is_file():
+            s["db"] = base_remota.abrir(localmente)
+        else:
+            st.error(f"Sem base de dados: {s['erros'].get('base', 'tenta novamente dentro de instantes')}.")
+            st.stop()
     return s
 
 
@@ -311,7 +332,7 @@ def cartao(anuncio, chave, favorito=False):
             st.caption("🔧 Margem sem contar a reparação: confirmar o custo com um mecânico.")
         a, b = st.container(key=f"botoes-{chave}").columns([3, 2])
         a.link_button("Ver anúncio", anuncio["url"], width="stretch")
-        db = estado()["db"]
+        db = estado()["fav"]
         if favorito:
             if b.button("Remover", key=f"{chave}-rm", help="Remover dos favoritos", width="stretch"):
                 with db:
@@ -325,34 +346,8 @@ def cartao(anuncio, chave, favorito=False):
             st.rerun(scope="app")  # o separador Favoritos é outro fragmento: redesenha a página toda
 
 
-def vivos(anuncios, limite):
-    """Confirma no site, antes de mostrar, que os anúncios ainda existem (cada um no máximo de 30 em 30 min).
-    Os eliminados ficam marcados e saem da lista; os seguintes ocupam o lugar."""
-    db, ficam = estado()["db"], []
-    recente = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
-    for inicio in range(0, len(anuncios), limite):
-        lote = anuncios[inicio:inicio + limite]
-        chaves = [(a["origem"], a["id"]) for a in lote]
-        marcas_db = {(o, i): (r, v) for o, i, r, v in db.execute(
-            "SELECT origem, id, coalesce(removido, 0), coalesce(verificado_em >= ?, 0) FROM anuncios "
-            f"WHERE (origem, id) IN (VALUES {','.join(['(?, ?)'] * len(chaves))})",
-            [recente, *[x for c in chaves for x in c]])}
-        rever = [a for a in lote if a["origem"] != "facebook" and not marcas_db.get((a["origem"], a["id"]), (0, 0))[1]]
-        with ThreadPoolExecutor(8) as pool:
-            for a, existe in zip(rever, pool.map(lambda a: ainda_existe(a["url"]), rever)):
-                if existe is not None:
-                    marcas_db[(a["origem"], a["id"])] = (int(not existe), 1)
-                    with db:
-                        db.execute("UPDATE anuncios SET removido = ?, verificado_em = ? WHERE origem = ? AND id = ?",
-                                   (int(not existe), datetime.now(UTC).isoformat(), a["origem"], a["id"]))
-        ficam += [a for a in lote if not marcas_db.get((a["origem"], a["id"]), (0, 0))[0]]
-        if len(ficam) >= limite:
-            break
-    return ficam[:limite]
-
-
 def grelha(anuncios, prefixo, colunas=4, favorito=False, limite=24):
-    anuncios = vivos(anuncios, limite)
+    anuncios = anuncios[:limite]
     for inicio in range(0, len(anuncios), colunas):
         for coluna, anuncio in zip(st.columns(colunas), anuncios[inicio:inicio + colunas]):
             with coluna:
@@ -374,8 +369,6 @@ toyota_tab, negocios, favoritos, mercado_tab, procura = st.tabs(
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def painel():
     s = estado()
-    if not s["semeado"]:
-        st.info("Primeira vez: a conhecer o mercado nos 6 sites (cerca de 1 minuto). A página atualiza sozinha.")
     todos = analisados()
 
     a, b, c, d = st.container(key="metricas-geral").columns(4)
@@ -387,7 +380,7 @@ def painel():
     ultimo = s["db"].execute("SELECT MAX(atualizado_em) FROM anuncios").fetchone()[0]
     d.metric("Último anúncio lido", datetime.fromisoformat(ultimo).astimezone().strftime("%H:%M:%S") if ultimo else "—")
     for origem, erro in list(s["erros"].items()):
-        st.warning(f"{NOMES.get(origem, 'Mercado')}: {erro}")
+        st.warning(f"{NOMES.get(origem, 'Base de dados')}: {erro}")
     with st.expander("Estado dos sites"):
         st.caption("Cada site lido nas últimas 24 h. Os carros com modelo por confirmar aparecem no painel, mas "
                    "não entram no valor de mercado nem vão para o Telegram.")
@@ -443,9 +436,16 @@ with negocios:
 
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def lista_favoritos():
-    db = estado()["db"]
-    rows = db.execute(f"SELECT {', '.join('a.' + c for c in COLUNAS)}, f.guardado_preco FROM favoritos_v2 f "
-                      "JOIN anuncios a USING (origem, id) ORDER BY f.guardado_em DESC").fetchall()
+    s = estado()
+    db = s["db"]
+    guardados = s["fav"].execute(
+        "SELECT origem, id, guardado_preco FROM favoritos_v2 ORDER BY guardado_em DESC").fetchall()
+    rows = []
+    for origem, id_, preco in guardados:  # a base da vigia é só de leitura: os favoritos vivem noutra
+        r = db.execute(f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE origem = ? AND id = ?",
+                       (origem, id_)).fetchone()
+        if r:
+            rows.append((*r, preco))
     if not rows:
         st.info("Ainda sem favoritos. Carrega em \"Guardar\" num carro para o guardares aqui.")
         return
@@ -524,43 +524,16 @@ with mercado_tab:
                  column_config={"preco_medio": st.column_config.NumberColumn("preço médio", format="%d €")})
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def pesquisar(termo, caminho_sv):
-    anuncios, erros = [], []
-    fontes = [("OLX", lambda p: olx(p, termo))]
-    if caminho_sv:
-        fontes.append(("Standvirtual", lambda p: standvirtual(p, caminho_sv)))
-    for nome, buscar in fontes:
-        try:
-            for pagina in (1, 2, 3):
-                anuncios += list(buscar(pagina))
-        except RuntimeError as erro:
-            erros.append(f"{nome}: {erro}")
-    for cidade in BASE["facebook_cidades"]:
-        try:
-            anuncios += list(facebook(cidade, 500, 200000, termo=termo))
-        except RuntimeError as erro:
-            erros.append(f"Facebook ({cidade}): {erro}")
-    return anuncios, erros
-
-
 with procura:
-    st.caption("Lê agora o OLX, o Standvirtual e o Facebook para um modelo à tua escolha e junta-os ao mercado.")
-    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-    texto = c1.text_input("Marca e modelo", "Toyota Yaris")
-    if c2.button("Pesquisar", type="primary", width="stretch") and texto.strip():
-        st.session_state["pesquisa"] = texto.strip()
-    if st.session_state.get("pesquisa"):
-        partes = words(st.session_state["pesquisa"]).split()
-        caminho = f"{partes[0]}/{'-'.join(partes[1:])}" if len(partes) > 1 else ""
-        with st.spinner("A ler os sites…"):
-            lidos, erros = pesquisar(" ".join(partes), caminho)
-        for erro in erros:
-            st.warning(erro)
+    st.caption("Procura na base da vigia (todos os sites) por marca e modelo.")
+    texto = st.text_input("Marca e modelo", "Toyota Yaris")
+    termos = words(texto).split()
+    if termos:
+        sql = (f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE (removido IS NULL OR removido = 0) AND preco >= 300 "
+               + "AND (coalesce(modelo, '') || ' ' || titulo) LIKE ? " * len(termos) + "ORDER BY visto_em DESC LIMIT 400")
         db = estado()["db"]
-        for anuncio in lidos:
-            processar(db, dict(anuncio), BASE, referencia=True)  # enriquece o mercado
-        resultado = {a["url"]: analisar(identificar(db, dict(a)), db) for a in lidos if a["preco"]}
-        resultado = sorted(resultado.values(), key=lambda x: -(x["margem"] if x["margem"] is not None else -10**9))
-        st.caption(f"{len(lidos)} anúncios lidos · {sum(1 for x in resultado if x['bom'])} negócios")
-        grelha(resultado[:24], "pesq")
+        lidos = [carro(**dict(zip(COLUNAS, r))) for r in db.execute(sql, [f"%{t}%" for t in termos])]
+        resultado = sorted((analisar(a, db) for a in lidos),
+                           key=lambda x: -(x["margem"] if x["margem"] is not None else -10**9))
+        st.caption(f"{len(lidos)} anúncios · {sum(1 for x in resultado if x['bom'])} negócios")
+        grelha(resultado, "pesq")

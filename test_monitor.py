@@ -94,6 +94,18 @@ class MonitorTest(unittest.TestCase):
         self.config["so_foco_telegram"] = False  # e com o filtro desligado o Clio também avisa
         self.assertEqual(len(self.ciclo(p1=[clio("clio2", 3800)])), 1)
 
+    def test_verificar_marca_eliminados_e_painel_esconde(self):
+        from alerta.vigia import verificar
+        self.ciclo(p1=[yaris("vivo", 4000), yaris("morto", 4100), yaris("duvida", 4200)])
+        respostas = {"https://exemplo/vivo": True, "https://exemplo/morto": False, "https://exemplo/duvida": None}
+        with patch("alerta.vigia.ainda_existe", side_effect=lambda url: respostas[url]):
+            self.assertEqual(verificar(self.db, self.config), 1)
+        estado = dict(self.db.execute("SELECT id, removido FROM anuncios"))
+        self.assertEqual(estado, {"vivo": 0, "morto": 1, "duvida": None})  # dúvida: fica por verificar
+        with patch("alerta.vigia.ainda_existe") as outra:  # já verificados há pouco: não volta a abrir os sites
+            verificar(self.db, self.config)
+        self.assertEqual(outra.call_count, 1)  # só o que ficou em dúvida
+
     def test_avariados_entram_com_etiqueta(self):
         self.config["so_foco_telegram"] = False  # (todas as marcas: o filtro Toyota tem teste próprio)
         clio = lambda id, preco, **e: carro("olx", id, "Renault Clio 1.2", preco, f"https://exemplo/{id}",

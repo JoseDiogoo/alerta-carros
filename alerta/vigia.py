@@ -7,13 +7,16 @@ import subprocess
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 from .anuncio import NOMES, completar_motor
 from .catalogo import identificar
 from .db import abrir_db, duplicado, fonte_vazia, guardar, limpar, reidentificar, vale_guardar
 from .fontes import PAGINADAS, detalhe
+from .catalogo import slug
 from .fontes.facebook import SessaoFacebook, facebook
+from .fontes.http import ainda_existe
 from .fontes.olx import olx
 from .fontes.standvirtual import standvirtual
 from .negocio import apenas_foco, avaliar, candidato, de_foco, interessa
@@ -154,6 +157,32 @@ def explorar(db, config, aviso=print):
                 db.execute("INSERT OR REPLACE INTO estado VALUES (?, ?)", (chave, pagina))
 
 
+def verificar(db, config, lote=60):
+    """Marca como removidos os anúncios que o site já não tem (o painel esconde-os; continuam a contar no mercado).
+
+    Percorre primeiro as marcas em foco e os que há mais tempo não foram vistos. O Facebook não se verifica
+    (abrir o anúncio sem sessão leva ao login). Devolve quantos acabou de marcar como removidos.
+    """
+    foco = [slug(m) for m in config["marcas_foco"]]
+    antigos = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    linhas = db.execute(
+        "SELECT origem, id, url FROM anuncios WHERE origem != 'facebook' AND (removido IS NULL OR removido = 0) "
+        "AND preco BETWEEN ? AND ? AND (verificado_em IS NULL OR verificado_em < ?) "
+        f"ORDER BY marca IN ({','.join('?' * len(foco))}) DESC, verificado_em IS NOT NULL, verificado_em LIMIT ?",
+        (config["preco_min"], config["preco_max"], antigos, *foco, lote)).fetchall()
+    with ThreadPoolExecutor(6) as pool:
+        resultados = list(pool.map(lambda linha: ainda_existe(linha[2]), linhas))
+    agora = datetime.now(UTC).isoformat()
+    removidos = 0
+    with db:
+        for (origem, id_, _), existe in zip(linhas, resultados):
+            if existe is not None:  # None = não deu para saber (site em baixo): tenta noutro ciclo
+                db.execute("UPDATE anuncios SET removido = ?, verificado_em = ? WHERE origem = ? AND id = ?",
+                           (int(not existe), agora, origem, id_))
+                removidos += not existe
+    return removidos
+
+
 def semear(db, config, aviso=print):
     """Junta anúncios mais antigos (todas as marcas) para o valor de mercado existir desde o 1.º dia."""
     for origem in ("standvirtual", "olx"):
@@ -186,13 +215,17 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
         intervalo = config["facebook_cada_minutos"] * 60
     elif origem == "mercado":
         intervalo = config["intervalo_segundos"] * 4
+    elif origem == "verificar":
+        intervalo = 60
     else:
         intervalo = config["intervalo_segundos"]
     falhas, ciclos, limpeza, reidentificado = 0, 0, time.monotonic(), time.monotonic()
     while not parar.is_set():
         inicio = time.monotonic()
         try:
-            if origem == "mercado":
+            if origem == "verificar":
+                verificar(db, config)
+            elif origem == "mercado":
                 explorar(db, config)
                 if time.monotonic() - limpeza > 6 * 3600:  # regras da base também numa vigia longa (painel)
                     limpar(db, config)
@@ -236,6 +269,7 @@ def publicar(caminho):
     copia = caminho.with_name("publicar.sqlite3")
     with sqlite3.connect(caminho, timeout=60) as origem, sqlite3.connect(copia) as destino:
         origem.backup(destino)  # cópia consistente com as threads a escrever
+        destino.execute("PRAGMA journal_mode = DELETE")  # sem ficheiros -wal: abre-se só para leitura
     try:  # falhar a publicar nunca pára a vigia: tenta outra vez daqui a 30 min
         resultado = subprocess.run(["gh", "release", "upload", "dados", f"{copia}#base.sqlite3", "--clobber"],
                                    capture_output=True, text=True, timeout=300)
@@ -251,7 +285,7 @@ def vigiar_tudo(caminho, config, minutos=None):
     fim = time.monotonic() + minutos * 60 if minutos else None
     parar = threading.Event()
     threads = [threading.Thread(target=vigiar, args=(origem, caminho, config, parar), daemon=True, name=origem)
-               for origem in [*config["fontes"], "mercado"]]
+               for origem in [*config["fontes"], "mercado", "verificar"]]
     for thread in threads:
         thread.start()
     print(f"A vigiar {', '.join(NOMES[o] for o in config['fontes'])} em paralelo "
