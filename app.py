@@ -366,6 +366,25 @@ toyota_tab, negocios, favoritos, mercado_tab, procura = st.tabs(
     ["Toyota (foco)", "Outras marcas", "Favoritos", "Mercado", "Pesquisar modelo"])
 
 
+def tabela(lista_):
+    with st.expander(f"Ver os {len(lista_)} carros em tabela"):
+        st.dataframe(
+            pd.DataFrame(lista_).assign(avaria=lambda d: d["avaria"].map(lambda v: ", ".join(v["itens"])))[
+                ["margem", "desconto", "preco", "mediana", "venda", "n", "nivel", "pontuacao", "avaria",
+                                "modelo", "titulo", "ano", "km", "cilindrada", "potencia", "combustivel",
+                                "caixa", "local", "origem", "url"]],
+            hide_index=True, width="stretch",
+            column_config={"url": st.column_config.LinkColumn("anúncio", display_text="abrir"),
+                           "margem": st.column_config.NumberColumn("margem", format="%d €"),
+                           "preco": st.column_config.NumberColumn("preço", format="%d €"),
+                           "mediana": st.column_config.NumberColumn("mercado", format="%d €"),
+                           "venda": st.column_config.NumberColumn("venda provável", format="%d €"),
+                           "nivel": st.column_config.TextColumn("comparado com"),
+                           "desconto": st.column_config.NumberColumn("desconto", format="%d %%"),
+                           "n": st.column_config.NumberColumn("comparáveis"),
+                           "ano": st.column_config.NumberColumn(format="%d")})
+
+
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def painel():
     s = estado()
@@ -410,22 +429,7 @@ def painel():
             st.warning("Preços a menos de metade do mercado: confirma documentos e nunca pagues sinal "
                        "antes de ver o carro.")
         grelha(bons, "bons", limite=quantos)
-        with st.expander(f"Ver os {len(bons)} carros em tabela"):
-            st.dataframe(
-                pd.DataFrame(bons).assign(avaria=lambda d: d["avaria"].map(lambda v: ", ".join(v["itens"])))[
-                    ["margem", "desconto", "preco", "mediana", "venda", "n", "nivel", "pontuacao", "avaria",
-                                    "modelo", "titulo", "ano", "km", "cilindrada", "potencia", "combustivel",
-                                    "caixa", "local", "origem", "url"]],
-                hide_index=True, width="stretch",
-                column_config={"url": st.column_config.LinkColumn("anúncio", display_text="abrir"),
-                               "margem": st.column_config.NumberColumn("margem", format="%d €"),
-                               "preco": st.column_config.NumberColumn("preço", format="%d €"),
-                               "mediana": st.column_config.NumberColumn("mercado", format="%d €"),
-                               "venda": st.column_config.NumberColumn("venda provável", format="%d €"),
-                               "nivel": st.column_config.TextColumn("comparado com"),
-                               "desconto": st.column_config.NumberColumn("desconto", format="%d %%"),
-                               "n": st.column_config.NumberColumn("comparáveis"),
-                               "ano": st.column_config.NumberColumn(format="%d")})
+        tabela(bons)
 
     st.subheader("Acabados de chegar")
     grelha(todos, "novos", limite=8)
@@ -464,10 +468,12 @@ def lista_favoritos():
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def painel_toyota():
     """Só Toyota (todos dentro dos filtros), separados em prontos a vender e com avaria."""
-    o1, o2 = st.columns([2, 1])
+    o1, o2, o3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem_toyota")
     quantos = o2.selectbox("Mostrar (cada lista)", [24, 48, 96, 200], index=1, key="quantos_toyota")
-    toyotas = sorted(analisados(marca="toyota"), key=ORDENS[ordem])
+    so_melhores = o3.toggle("Só os bons negócios (critério do Telegram)", False, key="so_melhores_toyota")
+    todos_toyota = analisados(marca="toyota")
+    toyotas = sorted([x for x in todos_toyota if x["bom"]] if so_melhores else todos_toyota, key=ORDENS[ordem])
     prontos = [t for t in toyotas if not t["avaria"]["tem"]]
     com_avaria = [t for t in toyotas if t["avaria"]["tem"]]
     a, b, c, d = st.container(key="metricas-toyota").columns(4)
@@ -478,6 +484,9 @@ def painel_toyota():
              help=f"Toyota com pelo menos {round(BASE['desconto_foco'] * 100)}% abaixo do mercado")
     st.caption("Nos carros com avaria a margem não conta com a reparação: "
                "confirma sempre com um mecânico antes de comprar.")
+    if any(x["suspeito"] for x in toyotas[:quantos]):
+        st.warning("Preços a menos de metade do mercado: confirma documentos e nunca pagues sinal "
+                   "antes de ver o carro.")
     st.subheader(f"Prontos a vender ({len(prontos)})")
     if prontos:
         grelha(prontos, "toy-ok", limite=quantos)
@@ -488,6 +497,8 @@ def painel_toyota():
         grelha(com_avaria, "toy-rep", limite=quantos)
     else:
         st.info("Nenhum Toyota com avaria com estes filtros, por agora.")
+    if toyotas:
+        tabela(toyotas)
 
 
 with toyota_tab:
