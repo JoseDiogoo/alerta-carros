@@ -41,3 +41,20 @@ def next_data(page):
     if not match:
         raise RuntimeError("página sem dados de anúncios (o site mudou?)")
     return json.loads(match.group(1))
+
+
+def ainda_existe(url):
+    """False se o site diz que o anúncio foi eliminado ou vendido; None se não deu para saber."""
+    try:
+        with urlopen(Request(url, headers=HEADERS), timeout=15) as response:
+            final = response.url
+            pagina = response.read(200000).decode("utf-8", "replace")
+    except HTTPError as error:
+        return False if error.code in (404, 410) else None
+    except (URLError, OSError):
+        return None
+    if "gone=1" in final:  # CustoJusto manda os eliminados para a pesquisa
+        return False
+    if "autox.pt" in url and re.search(r"<title>[^<]* com \.</title>", pagina):
+        return False  # ponytail: AutoX responde 200 com página vazia (título sem km); muda se o site mudar
+    return True

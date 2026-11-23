@@ -16,7 +16,8 @@ def abrir_db(path, **opcoes):
                "PRIMARY KEY (origem, id))")
     colunas = {row[1] for row in db.execute("PRAGMA table_info(anuncios)")}
     for coluna in ("modelo", "foto", "combustivel", "caixa", "profissional", "importado", "sinais", "extras",
-                   "cilindrada", "potencia", "carrocaria", "atualizado_em", "marca", "modelo_site", "modelo_fonte"):
+                   "cilindrada", "potencia", "carrocaria", "atualizado_em", "marca", "modelo_site", "modelo_fonte",
+                   "removido", "verificado_em"):
         if coluna not in colunas:
             db.execute(f"ALTER TABLE anuncios ADD COLUMN {coluna}")
     if "atualizado_em" not in colunas:
@@ -59,7 +60,7 @@ def guardar(db, anuncio, alertado):
             "modelo_fonte = CASE WHEN excluded.modelo IS NOT NULL THEN excluded.modelo_fonte ELSE modelo_fonte END, "
             "modelo = coalesce(excluded.modelo, modelo), marca = coalesce(excluded.marca, marca), "
             "modelo_site = coalesce(excluded.modelo_site, modelo_site), "
-            "atualizado_em = excluded.atualizado_em, "
+            "atualizado_em = excluded.atualizado_em, removido = 0, "
             "ano = coalesce(excluded.ano, ano), km = coalesce(excluded.km, km), "
             "alertado = max(alertado, excluded.alertado), foto = coalesce(excluded.foto, foto), "
             "sinais = excluded.sinais, extras = coalesce(excluded.extras, extras), "

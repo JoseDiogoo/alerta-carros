@@ -1,6 +1,7 @@
 """Alerta Carros — os melhores negócios de carros em Portugal, com margem estimada, em tempo real."""
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -13,6 +14,7 @@ from alerta.anuncio import NOMES, carro, completar_motor
 from alerta.config import ROOT, load_config
 from alerta.db import abrir_db, limpar
 from alerta.fontes import facebook, olx, standvirtual
+from alerta.fontes.http import ainda_existe
 from alerta.mercado import analisar as analisar_mercado
 from alerta.negocio import excluido, melhor
 from alerta.catalogo import identificar
@@ -86,7 +88,7 @@ def recolha_continua(s):
 
 @st.cache_resource
 def estado():
-    esquema = 6  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
+    esquema = 7  # mudar quando a tabela ganha colunas: força a reabrir a base na Streamlit Cloud
     db = abrir_db(CAMINHO_DB, check_same_thread=False)
     db.execute("CREATE TABLE IF NOT EXISTS favoritos_v2 (origem TEXT, id TEXT, guardado_preco INTEGER, "
                "guardado_em TEXT, PRIMARY KEY (origem, id))")
@@ -201,6 +203,10 @@ def candidatos(limite=3000, marca=None):
         args.append(f"%{f['local'].strip()}%")
     if f["nacionais"]:
         sql.append("AND (importado IS NULL OR importado = 0)")
+    # eliminados ficam na base (contam para o mercado) mas não aparecem; o Facebook não deixa abrir o
+    # anúncio sem login, por isso só aparecem os que a pesquisa voltou a mostrar nas últimas 48 h
+    sql.append("AND (removido IS NULL OR removido = 0) AND (origem != 'facebook' OR atualizado_em >= ?)")
+    args.append((datetime.now(UTC) - timedelta(hours=48)).isoformat())
     sql.append("ORDER BY visto_em DESC LIMIT ?")
     args.append(limite)
     regras = {**BASE, "excluir": BASE["excluir"] if f["excluir"] else [],
@@ -319,7 +325,34 @@ def cartao(anuncio, chave, favorito=False):
             st.rerun(scope="app")  # o separador Favoritos é outro fragmento: redesenha a página toda
 
 
-def grelha(anuncios, prefixo, colunas=4, favorito=False):
+def vivos(anuncios, limite):
+    """Confirma no site, antes de mostrar, que os anúncios ainda existem (cada um no máximo de 30 em 30 min).
+    Os eliminados ficam marcados e saem da lista; os seguintes ocupam o lugar."""
+    db, ficam = estado()["db"], []
+    recente = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
+    for inicio in range(0, len(anuncios), limite):
+        lote = anuncios[inicio:inicio + limite]
+        chaves = [(a["origem"], a["id"]) for a in lote]
+        marcas_db = {(o, i): (r, v) for o, i, r, v in db.execute(
+            "SELECT origem, id, coalesce(removido, 0), coalesce(verificado_em >= ?, 0) FROM anuncios "
+            f"WHERE (origem, id) IN (VALUES {','.join(['(?, ?)'] * len(chaves))})",
+            [recente, *[x for c in chaves for x in c]])}
+        rever = [a for a in lote if a["origem"] != "facebook" and not marcas_db.get((a["origem"], a["id"]), (0, 0))[1]]
+        with ThreadPoolExecutor(8) as pool:
+            for a, existe in zip(rever, pool.map(lambda a: ainda_existe(a["url"]), rever)):
+                if existe is not None:
+                    marcas_db[(a["origem"], a["id"])] = (int(not existe), 1)
+                    with db:
+                        db.execute("UPDATE anuncios SET removido = ?, verificado_em = ? WHERE origem = ? AND id = ?",
+                                   (int(not existe), datetime.now(UTC).isoformat(), a["origem"], a["id"]))
+        ficam += [a for a in lote if not marcas_db.get((a["origem"], a["id"]), (0, 0))[0]]
+        if len(ficam) >= limite:
+            break
+    return ficam[:limite]
+
+
+def grelha(anuncios, prefixo, colunas=4, favorito=False, limite=24):
+    anuncios = vivos(anuncios, limite)
     for inicio in range(0, len(anuncios), colunas):
         for coluna, anuncio in zip(st.columns(colunas), anuncios[inicio:inicio + colunas]):
             with coluna:
@@ -382,7 +415,7 @@ def painel():
         if any(x["suspeito"] for x in bons[:quantos]):
             st.warning("Preços a menos de metade do mercado: confirma documentos e nunca pagues sinal "
                        "antes de ver o carro.")
-        grelha(bons[:quantos], "bons")
+        grelha(bons, "bons", limite=quantos)
         with st.expander(f"Ver os {len(bons)} carros em tabela"):
             st.dataframe(
                 pd.DataFrame(bons).assign(avaria=lambda d: d["avaria"].map(lambda v: ", ".join(v["itens"])))[
@@ -401,7 +434,7 @@ def painel():
                                "ano": st.column_config.NumberColumn(format="%d")})
 
     st.subheader("Acabados de chegar")
-    grelha(todos[:8], "novos")
+    grelha(todos, "novos", limite=8)
 
 
 with negocios:
@@ -424,7 +457,7 @@ def lista_favoritos():
     c.metric("Margem total estimada", euros(sum(x["margem"] or 0 for x in anuncios)))
     for x in baixaram:
         st.success(f"Baixou de preço: {x['titulo'][:60]}: {euros(x['guardado'])} → {euros(x['preco'])}")
-    grelha(anuncios, "fav", favorito=True)
+    grelha(anuncios, "fav", favorito=True, limite=500)
 
 
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
@@ -443,12 +476,12 @@ def painel_toyota():
                "confirma sempre com um mecânico antes de comprar.")
     st.subheader(f"Prontos a vender ({len(prontos)})")
     if prontos:
-        grelha(prontos[:48], "toy-ok")
+        grelha(prontos, "toy-ok", limite=48)
     else:
         st.info("Nenhum Toyota pronto a vender com estes filtros, por agora.")
     st.subheader(f"Com avaria ({len(com_avaria)})")
     if com_avaria:
-        grelha(com_avaria[:48], "toy-rep")
+        grelha(com_avaria, "toy-rep", limite=48)
     else:
         st.info("Nenhum Toyota com avaria com estes filtros, por agora.")
 
