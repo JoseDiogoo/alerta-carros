@@ -5,7 +5,7 @@ import re
 from urllib.parse import quote
 
 from ..anuncio import carro
-from ..texto import caixa, combustivel, inteiro, walk
+from ..texto import caixa, combustivel, data_utc, inteiro, walk
 from .http import descarregar
 
 
@@ -36,4 +36,5 @@ def olx(pagina, termo=None, preco_max=None):
                     combustivel=combustivel(params.get("combustivel")), caixa=caixa(params.get("gearbox")),
                     cilindrada=inteiro(params.get("engine_capacity")), potencia=inteiro(params.get("engine_power")),
                     carrocaria=params.get("body_type"),
-                    marca=marcas.get((ad.get("category") or {}).get("id")), modelo_site=params.get("modelo"))
+                    marca=marcas.get((ad.get("category") or {}).get("id")), modelo_site=params.get("modelo"),
+                    publicado_em=data_utc(ad.get("createdTime")))

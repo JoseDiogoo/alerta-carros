@@ -17,7 +17,7 @@ def abrir_db(path, **opcoes):
     colunas = {row[1] for row in db.execute("PRAGMA table_info(anuncios)")}
     for coluna in ("modelo", "foto", "combustivel", "caixa", "profissional", "importado", "sinais", "extras",
                    "cilindrada", "potencia", "carrocaria", "atualizado_em", "marca", "modelo_site", "modelo_fonte",
-                   "removido", "verificado_em"):
+                   "removido", "verificado_em", "publicado_em"):
         if coluna not in colunas:
             db.execute(f"ALTER TABLE anuncios ADD COLUMN {coluna}")
     if "atualizado_em" not in colunas:
@@ -53,14 +53,15 @@ def guardar(db, anuncio, alertado):
         db.execute(
             "INSERT INTO anuncios (origem, id, modelo, preco, ano, km, alertado, visto_em, titulo, url, local, "
             "foto, combustivel, caixa, profissional, importado, sinais, extras, cilindrada, potencia, carrocaria, "
-            "atualizado_em, marca, modelo_site, modelo_fonte) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "atualizado_em, marca, modelo_site, modelo_fonte, publicado_em) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (origem, id) DO UPDATE SET preco = excluded.preco, "
             # um modelo certo nunca é apagado por uma leitura sem modelo (ex.: lista sem campos)
             "modelo_fonte = CASE WHEN excluded.modelo IS NOT NULL THEN excluded.modelo_fonte ELSE modelo_fonte END, "
             "modelo = coalesce(excluded.modelo, modelo), marca = coalesce(excluded.marca, marca), "
             "modelo_site = coalesce(excluded.modelo_site, modelo_site), "
             "atualizado_em = excluded.atualizado_em, removido = 0, "
+            "publicado_em = coalesce(excluded.publicado_em, publicado_em), "
             "ano = coalesce(excluded.ano, ano), km = coalesce(excluded.km, km), "
             "alertado = max(alertado, excluded.alertado), foto = coalesce(excluded.foto, foto), "
             "sinais = excluded.sinais, extras = coalesce(excluded.extras, extras), "
@@ -74,7 +75,8 @@ def guardar(db, anuncio, alertado):
              json.dumps(anuncio.get("sinais") or av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])),
              json.dumps(anuncio["extras"]) if anuncio.get("extras") else None,
              anuncio.get("cilindrada"), anuncio.get("potencia"), anuncio.get("carrocaria"), agora,
-             anuncio.get("marca"), anuncio.get("modelo_site"), anuncio.get("modelo_fonte")))
+             anuncio.get("marca"), anuncio.get("modelo_site"), anuncio.get("modelo_fonte"),
+             anuncio.get("publicado_em")))
 
 
 def limpar(db, config):

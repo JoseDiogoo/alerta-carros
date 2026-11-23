@@ -15,7 +15,7 @@ def carro(origem, id, titulo, preco, url, **extra):
             "url": url, "km": None, "ano": None, "local": "", "profissional": None,
             "importado": None, "avaliacao_site": None, "texto": "", "destaque": False, "foto": None,
             "combustivel": None, "caixa": None, "cilindrada": None, "potencia": None, "carrocaria": None,
-            "marca": None, "modelo_site": None, "modelo": None, "modelo_fonte": None, **extra}
+            "marca": None, "modelo_site": None, "modelo": None, "modelo_fonte": None, "publicado_em": None, **extra}
 
 
 def completar_motor(anuncio):

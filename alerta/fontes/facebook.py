@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -79,6 +80,11 @@ def completar_facebook(anuncio):
         return
 
 
+def publicado(segundos):
+    """creation_time do Facebook (segundos Unix) em data ISO UTC."""
+    return datetime.fromtimestamp(segundos, UTC).isoformat() if isinstance(segundos, int) else None
+
+
 def facebook(cidade, preco_min, preco_max, termo=None):
     """Categoria de veículos do Marketplace: abre sem login (a pesquisa por texto passou a pedir login).
 
@@ -107,7 +113,8 @@ def facebook(cidade, preco_min, preco_max, termo=None):
                 f"https://www.facebook.com/marketplace/item/{item['id']}/",
                 km=km_do_texto(f"{title} {subtitles}"), ano=ano_do_texto(title),
                 local=((item.get("location") or {}).get("reverse_geocode") or {}).get("city") or "",
-                foto=(((item.get("primary_listing_photo") or {}).get("image")) or {}).get("uri"))
+                foto=(((item.get("primary_listing_photo") or {}).get("image")) or {}).get("uri"),
+                publicado_em=publicado(item.get("creation_time")))
     if termo:
         palavras = words(termo).split()
         found = {k: a for k, a in found.items() if all(w in words(a["titulo"]).split() for w in palavras)}

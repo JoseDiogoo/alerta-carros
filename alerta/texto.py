@@ -21,6 +21,15 @@ def walk(obj):
             yield from walk(value)
 
 
+def data_utc(value):
+    """Data ISO de um site (com Z ou fuso) em UTC, para se poder ordenar como texto; None se inválida."""
+    try:
+        from datetime import UTC, datetime
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(UTC).isoformat()
+    except ValueError:
+        return None
+
+
 def inteiro(value):
     try:
         number = float(re.sub(r"[\s ]", "", str(value)).replace(",", "."))

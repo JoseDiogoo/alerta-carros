@@ -65,7 +65,7 @@ ATUALIZAR_SEGUNDOS = 15
 SEM_FOTO = "https://placehold.co/640x480/1f2937/9ca3af?text=Sem+foto"
 COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto", "modelo", "combustivel",
            "caixa", "profissional", "importado", "sinais", "extras", "cilindrada", "potencia", "carrocaria",
-           "marca", "modelo_site", "modelo_fonte"]
+           "marca", "modelo_site", "modelo_fonte", "publicado_em"]
 CAMINHO_DB = ROOT / "painel.sqlite3"
 
 
@@ -130,7 +130,7 @@ ORDENS = {
     "Mais caro": lambda a: -a["preco"],
     "Menos quilómetros": lambda a: a["km"] or 10**9,
     "Mais novo": lambda a: -(a["ano"] or 0),
-    "Publicados mais recentemente": lambda a: 0,  # ordem da base: visto_em (1.ª vez que a vigia o viu)
+    "Publicados mais recentemente": lambda a: 0,  # ordem da base: data de publicação do site, ou a 1.ª vez que a vigia o viu
 }
 
 
@@ -228,7 +228,7 @@ def candidatos(limite=3000, marca=None):
     # anúncio sem login, por isso só aparecem os que a pesquisa voltou a mostrar nas últimas 48 h
     sql.append("AND (removido IS NULL OR removido = 0) AND (origem != 'facebook' OR atualizado_em >= ?)")
     args.append((datetime.now(UTC) - timedelta(hours=48)).isoformat())
-    sql.append("ORDER BY visto_em DESC LIMIT ?")
+    sql.append("ORDER BY coalesce(publicado_em, visto_em) DESC LIMIT ?")
     args.append(limite)
     regras = {**BASE, "excluir": BASE["excluir"] if f["excluir"] else [],
               "excluir_texto": BASE["excluir_texto"] if f["excluir"] else []}
@@ -545,7 +545,7 @@ with procura:
     termos = words(texto).split()
     if termos:
         sql = (f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE (removido IS NULL OR removido = 0) AND preco >= 300 "
-               + "AND (coalesce(modelo, '') || ' ' || titulo) LIKE ? " * len(termos) + "ORDER BY visto_em DESC LIMIT 400")
+               + "AND (coalesce(modelo, '') || ' ' || titulo) LIKE ? " * len(termos) + "ORDER BY coalesce(publicado_em, visto_em) DESC LIMIT 400")
         db = estado()["db"]
         lidos = [carro(**dict(zip(COLUNAS, r))) for r in db.execute(sql, [f"%{t}%" for t in termos])]
         resultado = sorted((analisar(a, db) for a in lidos),

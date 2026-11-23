@@ -1,7 +1,7 @@
 """CustoJusto."""
 
 from ..anuncio import carro
-from ..texto import ano_do_texto, caixa, combustivel, inteiro, km_da_faixa, km_do_texto, walk
+from ..texto import ano_do_texto, caixa, combustivel, data_utc, inteiro, km_da_faixa, km_do_texto, walk
 from .http import descarregar, next_data
 
 
@@ -21,7 +21,8 @@ def custojusto(pagina):
                     profissional=ad.get("companyAd"), texto=ad.get("body") or "",
                     foto=ad.get("imageFullURL"),
                     combustivel=combustivel((ad.get("params") or {}).get("fuel")),
-                    caixa=caixa((ad.get("params") or {}).get("gearbox")))
+                    caixa=caixa((ad.get("params") or {}).get("gearbox")),
+                    publicado_em=data_utc(ad.get("listTime")))
 
 
 def completar_custojusto(anuncio):

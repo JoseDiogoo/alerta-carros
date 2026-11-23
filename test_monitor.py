@@ -236,5 +236,12 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(len(self.ciclo(p1=[yaris("novo", 4000)])), 1)
 
 
+class DataPublicacao(unittest.TestCase):
+    def test_datas_de_sites_ordenam_em_utc(self):
+        self.assertEqual(texto.data_utc("2026-11-23T14:51:30Z"), "2026-11-23T14:51:30+00:00")
+        self.assertEqual(texto.data_utc("2026-10-04T10:08:33+01:00"), "2026-10-04T09:08:33+00:00")
+        self.assertIsNone(texto.data_utc(None))
+
+
 if __name__ == "__main__":
     unittest.main()
