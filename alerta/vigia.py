@@ -1,6 +1,8 @@
 """Vigia dos sites: lê cada fonte ao seu ritmo, guarda e alerta."""
 
 import math
+import os
+import subprocess
 import sqlite3
 import threading
 import time
@@ -57,7 +59,12 @@ def processar(db, anuncio, config, referencia):
                 ENVIADOS_TODOS[0] += 1  # ponytail: teto por janela de 30 min para o Telegram não bloquear o bot
                 alert = mensagem_simples(anuncio)
             if alert:
-                send(alert, anuncio["foto"])  # se falhar, nada é guardado e o anúncio é tentado no próximo ciclo
+                try:
+                    send(alert, anuncio["foto"])
+                except RuntimeError as error:  # timeout ou 429: a página continua; o anúncio não é guardado
+                    print(f"{datetime.now():%H:%M:%S} Telegram falhou ({error}); volta a tentar no próximo ciclo.",
+                          flush=True)
+                    return False
                 print(f"{datetime.now():%H:%M:%S} Alerta ({NOMES[anuncio['origem']]}): {anuncio['titulo']}",
                       flush=True)
                 guardar(db, anuncio, alertado=True)
@@ -211,6 +218,22 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
     db.close()
 
 
+def publicar(caminho):
+    """Checkpoint: cópia coerente da base para o GitHub Release "dados" (sobrevive a um runner cancelado e é
+    o que o painel lê). Só corre se PUBLICAR_BASE estiver definido (GitHub Actions)."""
+    copia = caminho.with_name("publicar.sqlite3")
+    with sqlite3.connect(caminho, timeout=60) as origem, sqlite3.connect(copia) as destino:
+        origem.backup(destino)  # cópia consistente com as threads a escrever
+    try:  # falhar a publicar nunca pára a vigia: tenta outra vez daqui a 30 min
+        resultado = subprocess.run(["gh", "release", "upload", "dados", f"{copia}#base.sqlite3", "--clobber"],
+                                   capture_output=True, text=True, timeout=300)
+        erro = resultado.stderr.strip()[:200] if resultado.returncode else None
+    except (OSError, subprocess.TimeoutExpired) as error:
+        erro = str(error)
+    print(f"{datetime.now():%H:%M:%S} " + (f"Falhou a publicar a base: {erro}" if erro else "Base publicada"),
+          flush=True)
+
+
 def vigiar_tudo(caminho, config, minutos=None):
     """Vigia todas as fontes em paralelo. minutos: pára ao fim desse tempo (GitHub Actions) e fecha a base."""
     fim = time.monotonic() + minutos * 60 if minutos else None
@@ -227,6 +250,8 @@ def vigiar_tudo(caminho, config, minutos=None):
             parar.wait(1800 if fim is None else min(1800, max(1, fim - time.monotonic())))
             with ALERTA:
                 ENVIADOS_TODOS[0] = 0  # max_alertas_todos vale por cada 30 min
+            if os.environ.get("PUBLICAR_BASE"):
+                publicar(caminho)  # de 30 em 30 min
     finally:
         parar.set()
         for thread in threads:
@@ -234,4 +259,6 @@ def vigiar_tudo(caminho, config, minutos=None):
         db = sqlite3.connect(caminho, timeout=60)
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # tudo no .sqlite3: é esse o ficheiro guardado na cache
         db.close()
+        if os.environ.get("PUBLICAR_BASE"):
+            publicar(caminho)
         print(f"{datetime.now():%H:%M:%S} Fim da vigia.", flush=True)

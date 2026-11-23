@@ -1,7 +1,7 @@
 name: Alertas de carros
 
 # Corre na nuvem do GitHub sem parar, com o PC desligado: cada execução vigia os sites de 15 em 15 s
-# (e o Facebook via Cloudflare WARP) durante ~5h40 e no fim relança-se a si própria. O agendamento de hora a hora
+# durante ~5h40 e no fim relança-se a si própria. O agendamento de hora a hora
 # é só a reserva, caso a cadeia se quebre. Repositório público: minutos do GitHub Actions ilimitados.
 on:
   schedule:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # publicar a base no Release "dados" (checkpoint e leitura do painel)
   actions: write  # para se relançar no fim (gh workflow run)
 
 concurrency:
@@ -36,59 +36,24 @@ jobs:
         run: |
           sed -e 's/^paginas_exploracao = .*/paginas_exploracao = 2/' config.exemplo.toml > config.toml
 
-      - name: Instalar e ligar o Cloudflare WARP (VPN para aceder ao Facebook)
-        continue-on-error: true
+      - name: Base mais recente (Release "dados", mais nova do que a cache)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Adicionar o repositório oficial da Cloudflare
-          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq cloudflare-warp
-
-          # Prevenir conflito de permissões no DNS do runner Ubuntu
-          sudo chown root:root /etc/resolv.conf || true
-
-          # Iniciar o daemon
-          sudo systemctl start warp-svc
-
-          # Registar conta gratuita de consumidor (não requer credenciais nem registo de equipa)
-          warp-cli --accept-tos registration new || true
-
-          # Definir modo VPN e ligar
-          warp-cli --accept-tos mode warp || true
-          warp-cli --accept-tos connect
-
-          # Aguardar ligação ativa ("Disconnected" também contém "connected": procura a linha exata)
-          LIGADO=0
-          for i in {1..15}; do
-            STATUS=$(warp-cli --accept-tos status 2>&1 || true)
-            echo "$STATUS"
-            if echo "$STATUS" | grep -q "Status update: Connected"; then
-              LIGADO=1
-              echo "Cloudflare WARP ligado com sucesso!"
-              break
-            fi
-            sleep 2
-          done
-          [ "$LIGADO" = 1 ] || echo "::warning::Cloudflare WARP não ligou: o Facebook deve pedir login."
-
-          # Diagnóstico: IP de saída (warp=on) e se o Facebook abre sem login
-          curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -E "^(ip|colo|warp)=" || true
-          FINAL=$(curl -s -o /dev/null -L -w '%{url_effective}' -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0" \
-            "https://www.facebook.com/marketplace/lisbon/vehicles/" || true)
-          echo "Facebook abre em: $FINAL"
-          case "$FINAL" in *login*) echo "::warning::O Facebook pede login mesmo com o WARP.";; esac
+          gh release view dados --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create dados --repo "${{ github.repository }}" --title "Base de dados" \
+              --notes "Base SQLite publicada pela vigia de 30 em 30 min (só anúncios públicos)."
+          gh release download dados --repo "${{ github.repository }}" -p base.sqlite3 -O config.sqlite3 --clobber \
+            || echo "Sem base publicada ainda: usa a da cache."
 
       - name: Vigiar os sites e enviar alertas (~5h40)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: "-5586087955"
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PUBLICAR_BASE: "1"
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: python3 monitor.py --minutos 340
-
-      - name: Desligar Cloudflare WARP
-        if: always()
-        run: |
-          warp-cli --accept-tos disconnect || true
 
       - name: Guardar o mercado aprendido
         if: always()

@@ -207,8 +207,7 @@ class MonitorTest(unittest.TestCase):
         self.ciclo(p1=[yaris(f"m{i}", 6000 + i * 10) for i in range(10)])
         self.paginas = {("olx", 1): [yaris("novo", 4000)]}
         with patch("alerta.vigia.send", side_effect=RuntimeError("Telegram em baixo")):
-            with self.assertRaises(RuntimeError):
-                ciclo_paginado(self.db, "olx", self.config)
+            ciclo_paginado(self.db, "olx", self.config)  # não aborta: regista e segue
         self.assertEqual(len(self.ciclo(p1=[yaris("novo", 4000)])), 1)
 
 

@@ -68,7 +68,7 @@ O bot é o @alerta_carros_pt_bot e o grupo é "Alerta Carros". Os segredos ficam
 
 ```toml
 TELEGRAM_BOT_TOKEN = "o token do @BotFather"
-TELEGRAM_CHAT_ID = "-5586087955"
+TELEGRAM_CHAT_ID = "-100..."  # o teu (python monitor.py --chat-id)
 ```
 
 ```powershell
