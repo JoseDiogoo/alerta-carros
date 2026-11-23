@@ -2,7 +2,7 @@
 
 Encontra os carros mais baratos face ao **valor de mercado** em Portugal, estima a **margem de lucro** e avisa no Telegram, sem serviços pagos.
 
-Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**, todos em paralelo: cada site de 15 em 15 segundos e o Facebook (7 cidades) de 3 em 3 minutos. Não há listas de marcas ou modelos escritas à mão. O Standvirtual e o OLX dão a marca e o modelo em campos próprios, e esses valores formam um catálogo que se aprende sozinho. Nos outros sites (CustoJusto, Facebook, AutoX, Auto.pt), o modelo só é aceite quando o texto do anúncio contém exatamente uma marca e um modelo desse catálogo. Na dúvida, o carro aparece no painel como "modelo por confirmar", mas não entra no valor de mercado nem dá alerta.
+Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Marketplace**, todos em paralelo: cada site de 15 em 15 segundos e o Facebook (7 cidades) em voltas de cerca de 10 minutos, com 5 de pausa. Não há listas de marcas ou modelos escritas à mão. O Standvirtual e o OLX dão a marca e o modelo em campos próprios, e esses valores formam um catálogo que se aprende sozinho. Nos outros sites (CustoJusto, Facebook, AutoX, Auto.pt), o modelo só é aceite quando o texto do anúncio contém exatamente uma marca e um modelo desse catálogo. Na dúvida, o carro aparece no painel como "modelo por confirmar", mas não entra no valor de mercado nem dá alerta.
 
 ## Como é avaliado cada carro
 
@@ -83,7 +83,13 @@ Na primeira execução, o monitor guarda os anúncios existentes como referênci
 
 O workflow do GitHub Actions (`.github/workflows/alertas.yml`) vigia os sites de 15 em 15 segundos durante cerca de 5h40 (`python monitor.py --minutos 340`). No fim, guarda o mercado aprendido na cache e relança-se a si próprio, sem precisar de token. Se a cadeia se quebrar, o agendamento de hora a hora retoma-a. O repositório é público, por isso os minutos do GitHub Actions são ilimitados.
 
-Para contornar o bloqueio por IP de datacenter imposto pelo Facebook nos servidores do GitHub, o workflow instala e ativa automaticamente o **Cloudflare WARP (grátis)** antes de iniciar a vigia. Assim, o tráfego de saída passa pela rede da Cloudflare, permitindo ler a categoria de veículos do Facebook Marketplace (sem login) 24/7 na nuvem, juntamente com o Standvirtual, OLX, CustoJusto, Auto.pt e AutoX.
+**Secrets do repositório** (GitHub → Settings → Secrets and variables → Actions): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` e `FACEBOOK_COOKIES`.
+
+**Telegram só de Toyota:** com `so_foco_telegram = true`, o Telegram só avisa das `marcas_foco` (Toyota), de qualquer site. As outras marcas ficam só no painel.
+
+**Facebook na nuvem:** os servidores do GitHub são IPs de datacenter, que o Facebook bloqueia sem sessão. Por isso a vigia usa os cookies de uma conta (`FACEBOOK_COOKIES`, uma linha `c_user=...; xs=...; datr=...`), com pausas de 15 a 45 segundos entre pedidos. Se o Facebook pedir login, a vigia avisa **uma vez** no Telegram e pára o Facebook até à execução seguinte: é altura de renovar o secret (os cookies caducam de tempos a tempos). Se uma volta inteira devolver 0 anúncios, o registo mostra o que o Facebook devolveu (título da página, tamanho, se o cookie foi enviado).
+
+**Base partilhada:** a vigia publica de 5 em 5 minutos a base de dados no Release `dados` (`base.sqlite3`). O painel descarrega-a quando muda e só a lê. A vigia também verifica de minuto a minuto se os anúncios ainda existem e marca os eliminados.
 
 Para parar os alertas: GitHub → Actions → "Alertas de carros" → "Disable workflow".
 
