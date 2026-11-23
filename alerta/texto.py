@@ -39,8 +39,16 @@ def inteiro(value):
 
 
 def ano_do_texto(texto):
-    match = re.search(r"\b(19[89]\d|20[0-3]\d)\b", texto or "")
-    return int(match.group()) if match else None
+    """Primeiro ano plausível do texto. Ignora o futuro, cilindradas ("2000cc") e datas de inspeção/seguro/IUC."""
+    from datetime import date
+    texto = texto or ""
+    for match in re.finditer(r"\b(19[89]\d|20[0-3]\d)\b", texto):
+        antes = texto[max(0, match.start() - 25):match.start()].casefold()
+        depois = texto[match.end():match.end() + 4].casefold().strip()
+        if (int(match.group()) <= date.today().year and not depois.startswith(("cc", "cv", "km", "€", "eur"))
+                and not re.search(r"inspe|at[eé]\b|valid|v[aá]lid|iuc|seguro", antes)):
+            return int(match.group())
+    return None
 
 
 def km_do_texto(texto):

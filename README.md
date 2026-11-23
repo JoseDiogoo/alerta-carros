@@ -13,6 +13,8 @@ Lê diretamente o **Standvirtual, OLX, CustoJusto, Auto.pt, AutoX e Facebook Mar
 5. **Página completa.** Nos candidatos a negócio é lida a página do anúncio: descrição, km, combustível, caixa, donos, garantia e 2.ª chave.
 6. **Avarias.** A descrição é lida e as avarias mencionadas (embraiagem, turbo, motor, chapa…) aparecem com a etiqueta **⚠ AVARIA**. O custo da reparação **não é estimado** (só um mecânico o sabe) e a avaria não tira pontos: a margem é a do carro como se estivesse bom. Só são excluídos os carros para peças, salvados, com penhora, sem documentos ou com matrícula estrangeira.
 
+**Comparação fraca (só no painel).** Quando o rigor acima não encontra comparáveis suficientes, o painel tenta uma comparação alargada (km ±80 % e comparáveis sem km, sem ajuste de km) e mostra a margem com o selo "comparação fraca (N carros)". Usa sempre o valor prudente e **nunca vai para o Telegram**. Sem avaliação, o selo diz o motivo ("sem ano", "só N comparáveis").
+
 **Margem = valor de mercado × 0,95 (venda provável) − preço − custos de revenda.**
 
 ## O que vai para o Telegram

@@ -77,13 +77,15 @@ def _parecido(valor, alvo, tolerancia, aceita_desconhecido):
     return abs(valor - alvo) <= tolerancia
 
 
-def comparar(db, anuncio, minimo=1):
+def comparar(db, anuncio, minimo=1, largo=False):
     """Valor de mercado rigoroso.
 
     1. Só carros do mesmo modelo, combustível, ano ±2 e km parecidos.
     2. Procura primeiro os de motor (cilindrada, potência) e caixa iguais; só alarga se forem poucos.
     3. Ajusta o preço de cada um à diferença de ano e de km (desvalorização aprendida por modelo).
     4. Tira preços absurdos (peças, erros) e usa a mediana.
+
+    largo=True (só o painel, nunca o Telegram): km ±80 % e aceita comparáveis sem km (sem ajuste de km).
     """
     vazio = {"mediana": None, "prudente": None, "n": 0, "km_mediano": None, "nivel": None, "dispersao": None}
     if not (anuncio.get("modelo") and anuncio["ano"]):
@@ -96,8 +98,8 @@ def comparar(db, anuncio, minimo=1):
         sql += " AND (combustivel = ? OR combustivel IS NULL)"
         args.append(anuncio["combustivel"])
     if anuncio["km"]:  # só compara com km parecidos: sem amostra não há estimativa (melhor que um valor errado)
-        margem_km = max(35000, anuncio["km"] * 0.45)
-        sql += " AND km BETWEEN ? AND ?"
+        margem_km = max(50000, anuncio["km"] * 0.8) if largo else max(35000, anuncio["km"] * 0.45)
+        sql += " AND (km IS NULL OR km BETWEEN ? AND ?)" if largo else " AND km BETWEEN ? AND ?"
         args += [anuncio["km"] - margem_km, anuncio["km"] + margem_km]
     unicos = {}
     for row in db.execute(sql, args):  # o mesmo carro publicado em vários sites conta uma só vez
@@ -143,9 +145,11 @@ def comparar(db, anuncio, minimo=1):
             "dispersao": (quartis[2] - quartis[0]) / mediana if quartis else None}
 
 
-def analisar(db, anuncio, config):
-    """Valor de mercado, venda provável, margem e pontuação (sem aplicar os mínimos do utilizador)."""
-    info = comparar(db, anuncio, config["min_comparaveis"])
+def analisar(db, anuncio, config, largo=False):
+    """Valor de mercado, venda provável, margem e pontuação (sem aplicar os mínimos do utilizador).
+
+    largo=True: comparação alargada (ver comparar); o resultado é sempre prudente e marcado "largo"."""
+    info = comparar(db, anuncio, config["min_comparaveis"], largo)
     sinais = anuncio.get("sinais") or av.sinais_do_texto(anuncio["titulo"], anuncio["texto"])
     if info["mediana"] is None:
         return {**info, "venda": None, "margem": None, "desconto": None, "ratio": None, "suspeito": False,
@@ -153,12 +157,12 @@ def analisar(db, anuncio, config):
                 "pontuacao": None, "fortes": [], "alertas": [], "sinais": sinais}
     # Comparação fraca (sem km, só o modelo, preços muito variáveis): usa um valor prudente (percentil 30)
     # em vez da mediana, para a margem nunca ser inflacionada por falta de dados.
-    fraca = (not anuncio["km"] or info["nivel"] == "mesmo modelo e combustível"
+    fraca = (largo or not anuncio["km"] or info["nivel"] == "mesmo modelo e combustível"
              or (info["dispersao"] or 0) > 0.35)
     mediana = info["prudente"] if fraca else info["mediana"]
     venda = mediana * config["fator_venda"]  # os anúncios são preços pedidos: vende-se um pouco abaixo
     # avarias: só etiqueta, sem custo (a gravidade é desconhecida); a margem é a do carro como se estivesse bom
-    analise = {**info, "mediana": round(mediana), "prudente_usado": fraca, "venda": round(venda),
+    analise = {**info, "largo": largo, "mediana": round(mediana), "prudente_usado": fraca, "venda": round(venda),
                "avaria": av.avaria(sinais),
                "margem": round(venda - anuncio["preco"] - config["custos_revenda"]),
                "desconto": round((1 - anuncio["preco"] / mediana) * 100), "ratio": anuncio["preco"] / mediana,

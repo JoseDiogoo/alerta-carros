@@ -198,6 +198,9 @@ with st.sidebar:
                                   help="Inspeção, limpeza, pequenas reparações e anúncio", key="f_custos")
     f["comparaveis"] = st.slider("Anúncios comparáveis mínimos", 3, 30, entre(BASE["min_comparaveis"], 3, 30),
                                  help="Mais anúncios = valor de mercado mais fiável", key="f_comparaveis")
+    f["fraca"] = st.toggle("Mostrar comparação fraca", True, key="f_fraca",
+                           help="Carros com poucos comparáveis: o valor de mercado usa uma janela de km maior e "
+                                "aceita comparáveis sem km. Nunca vão para o Telegram.")
     f["excluir"] = st.toggle("Esconder carros para peças e com problemas legais", True, key="f_excluir")
     f["avaria"] = st.toggle("Mostrar carros com avaria", True, key="f_avaria",
                             help="Aparecem com a etiqueta AVARIA. O custo da reparação não é estimado.")
@@ -270,8 +273,20 @@ def analisar(anuncio, db):
     anuncio = {**anuncio, "sinais": av.carregar(anuncio.get("sinais")) or None,
                "extras": av.carregar(anuncio.get("extras"))}
     completar_motor(anuncio)
-    analise = analisar_mercado(db, anuncio, {**BASE, "custos_revenda": f["custos"], "min_comparaveis": f["comparaveis"]})
-    resultado = {**anuncio, **analise, "bom": melhor(anuncio, analise, BASE)}  # bom = iria para o Telegram
+    config = {**BASE, "custos_revenda": f["custos"], "min_comparaveis": f["comparaveis"]}
+    analise = analisar_mercado(db, anuncio, config)
+    bom = melhor(anuncio, analise, BASE)  # bom = iria para o Telegram: só com a comparação rigorosa
+    motivo = None
+    if analise["margem"] is None and anuncio.get("modelo"):
+        if not anuncio["ano"]:
+            motivo = "sem ano"
+        else:  # comparação alargada, só para o painel
+            larga = analisar_mercado(db, anuncio, config, largo=True)
+            if larga["margem"] is not None:
+                analise = larga
+            else:
+                motivo = f"só {larga['n']} comparáveis"
+    resultado = {**anuncio, **analise, "bom": bom, "motivo": motivo}
     if len(cache) > 50000:
         cache.clear()
     cache[chave] = (time.monotonic(), resultado)
@@ -282,7 +297,7 @@ def analisados(marca=None):
     """Todos os carros dentro dos filtros, avaliados (com avaria incluídos, se o filtro deixar)."""
     db = estado()["db"]
     lista_ = [analisar(a, db) for a in candidatos(marca=marca)]
-    return [a for a in lista_ if (f["avaria"] or not a["avaria"]["tem"])
+    return [a for a in lista_ if (f["avaria"] or not a["avaria"]["tem"]) and (f["fraca"] or not a.get("largo"))
             and not (f["excluir"] and a["avaria"]["inviaveis"])]
 
 
@@ -295,7 +310,7 @@ def cartao(anuncio, chave, favorito=False):
         st.image(anuncio["foto"] or SEM_FOTO, width="stretch")
         if anuncio["margem"] is None:
             selo = ('<span class="selo neutro">modelo por confirmar</span>' if not anuncio.get("modelo") else
-                    '<span class="selo neutro">a recolher dados de mercado</span>')
+                    f'<span class="selo neutro">sem avaliação: {escape(anuncio.get("motivo") or "poucos comparáveis")}</span>')
         elif anuncio.get("irreal"):
             selo = f'<span class="selo suspeito">{anuncio["desconto"]}% abaixo · preço irreal</span>'
         elif anuncio["suspeito"]:
@@ -306,6 +321,8 @@ def cartao(anuncio, chave, favorito=False):
             selo = f'<span class="selo neutro">{anuncio["desconto"]}% abaixo do mercado</span>'
         else:
             selo = f'<span class="selo neutro">{-anuncio["desconto"]:+d}% vs mercado</span>'
+        if anuncio.get("largo") and anuncio["margem"] is not None:
+            selo += f' <span class="selo neutro" title="valor de mercado com janela de km maior e comparáveis sem km">comparação fraca ({anuncio["n"]} carros)</span>'
         if anuncio["avaria"]["tem"]:
             itens = ", ".join(anuncio["avaria"]["itens"][:3])
             selo += f' <span class="selo avaria" title="{escape(itens)}">⚠ AVARIA: {escape(itens[:40])}</span>'

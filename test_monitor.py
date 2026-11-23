@@ -243,5 +243,29 @@ class DataPublicacao(unittest.TestCase):
         self.assertIsNone(texto.data_utc(None))
 
 
+class ComparacaoLarga(unittest.TestCase):
+    def test_larga_aceita_comparaveis_sem_km_e_o_telegram_nao(self):
+        from alerta.mercado import analisar
+        db = abrir_db(":memory:")
+        config = {**load_config(Path("config.exemplo.toml")), "min_comparaveis": 6}
+        for i in range(8):  # 8 iguais, todos sem km: a comparação rigorosa não os usa
+            db.execute("INSERT INTO anuncios (origem, id, modelo, preco, ano, km, combustivel) "
+                       "VALUES ('olx', ?, 'toyota yaris', 4000, 2008, NULL, 'Gasolina')", (str(i),))
+        alvo = carro("olx", "x", "Toyota Yaris", 2500, "u", km=150000, ano=2008, combustivel="Gasolina",
+                     modelo="toyota yaris", texto="")
+        self.assertIsNone(analisar(db, alvo, config)["margem"])
+        larga = analisar(db, alvo, config, largo=True)
+        self.assertIsNotNone(larga["margem"])
+        self.assertTrue(larga["largo"] and larga["prudente_usado"])
+
+
+class AnoDoTexto(unittest.TestCase):
+    def test_ignora_inspecao_futuro_e_cilindrada(self):
+        self.assertEqual(texto.ano_do_texto("Toyota Hilux 2.4 1988 5 velocidades"), 1988)
+        self.assertIsNone(texto.ano_do_texto("Inspeção até mar 2027"))
+        self.assertIsNone(texto.ano_do_texto("Yaris 2000cc"))
+        self.assertEqual(texto.ano_do_texto("Yaris 2000cc de 2008"), 2008)
+
+
 if __name__ == "__main__":
     unittest.main()

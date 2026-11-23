@@ -95,6 +95,8 @@ def mensagem(anuncio, analise, old_price):
         lines.insert(2, f"⚠️ AVARIA: {', '.join(avaria['itens'][:4])}"
                         + (" (por identificar)" if avaria["incerta"] else "")
                         + " · margem sem a reparação, confirmar com mecânico")
+    if not anuncio["km"]:
+        lines.insert(2, "⚠️ SEM KM no anúncio: valor de mercado prudente, confirma os km antes de avançar")
     if analise["suspeito"]:
         lines.append("ATENÇÃO: muito abaixo do mercado. Confirma documentos e não pagues sinal antes de ver o carro.")
     return "\n".join(lines + [anuncio["url"]])

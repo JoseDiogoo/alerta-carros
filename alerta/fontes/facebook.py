@@ -72,6 +72,7 @@ def completar_facebook(anuncio):
             combustivel=COMBUSTIVEL_FB.get(item.get("vehicle_fuel_type")) or anuncio["combustivel"],
             caixa=caixa(item.get("vehicle_transmission_type")) or anuncio["caixa"],
             texto=(item.get("redacted_description") or {}).get("text") or anuncio["texto"],
+            ano=anuncio["ano"] or ano_do_texto((item.get("redacted_description") or {}).get("text")),
             profissional={"PRIVATE_SELLER": False, "DEALER": True}.get(item.get("vehicle_seller_type"),
                                                                          anuncio["profissional"]),
             extras={**(anuncio.get("extras") or {}), **({"donos": donos} if donos else {})},
