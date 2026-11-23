@@ -21,12 +21,20 @@ def cabecalhos():
         return HEADERS
 
 
+ULTIMA = {}  # diagnóstico da última página lida: o que o Facebook devolveu (útil na nuvem, onde não se vê)
+
+
 def pagina(url):
+    cabecalho = cabecalhos()
     try:
-        with urlopen(Request(url, headers=cabecalhos()), timeout=20) as response:
+        with urlopen(Request(url, headers=cabecalho), timeout=20) as response:
             if "/login" in response.geturl() or "/checkpoint" in response.geturl():
                 raise SessaoFacebook("www.facebook.com: pede login (sessão expirada ou bloqueada)")
-            return response.read().decode("utf-8", "replace")
+            texto = response.read().decode("utf-8", "replace")
+            titulo = re.search(r"<title[^>]*>(.*?)</title>", texto, re.S)
+            ULTIMA.update(cookie="Cookie" in cabecalho, bytes=len(texto), anuncios=texto.count("marketplace_listing_title"),
+                          titulo=(titulo.group(1).strip()[:60] if titulo else "sem título"), url=response.geturl()[:80])
+            return texto
     except HTTPError as error:
         raise RuntimeError(f"www.facebook.com: HTTP {error.code}") from None
     except (URLError, OSError):

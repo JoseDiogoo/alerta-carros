@@ -15,7 +15,7 @@ from .catalogo import identificar
 from .db import abrir_db, duplicado, fonte_vazia, guardar, limpar, reidentificar, vale_guardar
 from .fontes import PAGINADAS, detalhe
 from .catalogo import slug
-from .fontes.facebook import SessaoFacebook, facebook
+from .fontes.facebook import ULTIMA, SessaoFacebook, facebook
 from .fontes.http import ainda_existe
 from .fontes.olx import olx
 from .fontes.standvirtual import standvirtual
@@ -106,6 +106,8 @@ def ciclo_facebook(db, config, so_guardar=False):
             for anuncio in anuncios:
                 processar(db, anuncio, config, referencia)
             time.sleep(random.uniform(15, 45))  # ritmo humano: com sessão de conta, rajadas dão bloqueio
+    if total == 0:  # nem uma cidade deu anúncios: não é "0 novos", é uma página sem dados (bloqueio silencioso)
+        raise RuntimeError(f"Facebook devolveu 0 anúncios em todas as pesquisas ({ULTIMA})")
     return total, referencia
 
 
