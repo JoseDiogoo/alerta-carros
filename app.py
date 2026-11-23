@@ -66,6 +66,14 @@ SEM_FOTO = "https://placehold.co/640x480/1f2937/9ca3af?text=Sem+foto"
 COLUNAS = ["origem", "id", "titulo", "preco", "url", "ano", "km", "local", "foto", "modelo", "combustivel",
            "caixa", "profissional", "importado", "sinais", "extras", "cilindrada", "potencia", "carrocaria",
            "marca", "modelo_site", "modelo_fonte", "publicado_em"]
+
+
+def selecao(db):
+    """Colunas a ler e critério de 'mais recente'. A base publicada por uma vigia mais antiga pode não ter
+    publicado_em: nesse caso lê-se NULL e ordena-se pela hora a que a vigia viu o anúncio."""
+    tem = any(r[1] == "publicado_em" for r in db.execute("PRAGMA table_info(anuncios)"))
+    return (", ".join(c if tem or c != "publicado_em" else "NULL AS publicado_em" for c in COLUNAS),
+            "coalesce(publicado_em, visto_em)" if tem else "visto_em")
 CAMINHO_DB = ROOT / "painel.sqlite3"
 
 
@@ -205,7 +213,8 @@ with st.sidebar:
 def candidatos(limite=3000, marca=None):
     """Anúncios que passam os filtros de base (SQL), mais recentes primeiro. marca: só essa marca."""
     marcas_sel, modelos_sel = ([marca], []) if marca else (marcas, modelos)
-    sql = [f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE preco BETWEEN ? AND ? "
+    colunas, recente = selecao(estado()["db"])
+    sql = [f"SELECT {colunas} FROM anuncios WHERE preco BETWEEN ? AND ? "
            "AND (ano IS NULL OR ano BETWEEN ? AND ?) AND (km IS NULL OR km <= ?)"]
     args = [*f["preco"], *f["ano"], f["km"]]
     for coluna, valores in (("modelo", modelos_sel), ("combustivel", f["combustivel"]), ("caixa", f["caixa"]),
@@ -228,7 +237,7 @@ def candidatos(limite=3000, marca=None):
     # anúncio sem login, por isso só aparecem os que a pesquisa voltou a mostrar nas últimas 48 h
     sql.append("AND (removido IS NULL OR removido = 0) AND (origem != 'facebook' OR atualizado_em >= ?)")
     args.append((datetime.now(UTC) - timedelta(hours=48)).isoformat())
-    sql.append("ORDER BY coalesce(publicado_em, visto_em) DESC LIMIT ?")
+    sql.append(f"ORDER BY {recente} DESC LIMIT ?")
     args.append(limite)
     regras = {**BASE, "excluir": BASE["excluir"] if f["excluir"] else [],
               "excluir_texto": BASE["excluir_texto"] if f["excluir"] else []}
@@ -447,7 +456,7 @@ def lista_favoritos():
         "SELECT origem, id, guardado_preco FROM favoritos_v2 ORDER BY guardado_em DESC").fetchall()
     rows = []
     for origem, id_, preco in guardados:  # a base da vigia é só de leitura: os favoritos vivem noutra
-        r = db.execute(f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE origem = ? AND id = ?",
+        r = db.execute(f"SELECT {selecao(db)[0]} FROM anuncios WHERE origem = ? AND id = ?",
                        (origem, id_)).fetchone()
         if r:
             rows.append((*r, preco))
@@ -544,8 +553,9 @@ with procura:
     texto = st.text_input("Marca e modelo", "Toyota Yaris")
     termos = words(texto).split()
     if termos:
-        sql = (f"SELECT {', '.join(COLUNAS)} FROM anuncios WHERE (removido IS NULL OR removido = 0) AND preco >= 300 "
-               + "AND (coalesce(modelo, '') || ' ' || titulo) LIKE ? " * len(termos) + "ORDER BY coalesce(publicado_em, visto_em) DESC LIMIT 400")
+        colunas, recente = selecao(estado()["db"])
+        sql = (f"SELECT {colunas} FROM anuncios WHERE (removido IS NULL OR removido = 0) AND preco >= 300 "
+               + "AND (coalesce(modelo, '') || ' ' || titulo) LIKE ? " * len(termos) + f"ORDER BY {recente} DESC LIMIT 400")
         db = estado()["db"]
         lidos = [carro(**dict(zip(COLUNAS, r))) for r in db.execute(sql, [f"%{t}%" for t in termos])]
         resultado = sorted((analisar(a, db) for a in lidos),
