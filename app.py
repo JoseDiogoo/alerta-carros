@@ -464,7 +464,10 @@ def lista_favoritos():
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def painel_toyota():
     """Só Toyota (todos dentro dos filtros), separados em prontos a vender e com avaria."""
-    toyotas = sorted(analisados(marca="toyota"), key=ORDENS["Melhor negócio (pontuação)"])
+    o1, o2 = st.columns([2, 1])
+    ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem_toyota")
+    quantos = o2.selectbox("Mostrar (cada lista)", [24, 48, 96, 200], index=1, key="quantos_toyota")
+    toyotas = sorted(analisados(marca="toyota"), key=ORDENS[ordem])
     prontos = [t for t in toyotas if not t["avaria"]["tem"]]
     com_avaria = [t for t in toyotas if t["avaria"]["tem"]]
     a, b, c, d = st.container(key="metricas-toyota").columns(4)
@@ -473,16 +476,16 @@ def painel_toyota():
     c.metric("Com avaria", len(com_avaria))
     d.metric("Melhores (Telegram)", sum(1 for t in toyotas if t["bom"]),
              help=f"Toyota com pelo menos {round(BASE['desconto_foco'] * 100)}% abaixo do mercado")
-    st.caption("Ordenados pela pontuação. Nos carros com avaria a margem não conta com a reparação: "
+    st.caption("Nos carros com avaria a margem não conta com a reparação: "
                "confirma sempre com um mecânico antes de comprar.")
     st.subheader(f"Prontos a vender ({len(prontos)})")
     if prontos:
-        grelha(prontos, "toy-ok", limite=48)
+        grelha(prontos, "toy-ok", limite=quantos)
     else:
         st.info("Nenhum Toyota pronto a vender com estes filtros, por agora.")
     st.subheader(f"Com avaria ({len(com_avaria)})")
     if com_avaria:
-        grelha(com_avaria, "toy-rep", limite=48)
+        grelha(com_avaria, "toy-rep", limite=quantos)
     else:
         st.info("Nenhum Toyota com avaria com estes filtros, por agora.")
 
