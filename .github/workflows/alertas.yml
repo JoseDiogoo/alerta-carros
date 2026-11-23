@@ -50,6 +50,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FACEBOOK_COOKIES: ${{ secrets.FACEBOOK_COOKIES }}
           PUBLICAR_BASE: "1"
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
