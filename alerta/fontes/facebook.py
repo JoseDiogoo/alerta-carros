@@ -8,7 +8,33 @@ from urllib.request import Request, urlopen
 
 from ..anuncio import carro
 from ..texto import ano_do_texto, caixa, inteiro, km_do_texto, walk, words
-from .http import HEADERS, descarregar
+from .http import HEADERS
+
+
+def cabecalhos():
+    """Com o secret FACEBOOK_COOKIES ("c_user=...; xs=...; datr=...") os pedidos vão com a sessão de uma conta:
+    o Facebook não manda para o login os IPs de datacenter (GitHub Actions). Sem ele, pedidos anónimos."""
+    try:
+        from ..config import secret
+        return {**HEADERS, "Cookie": secret("FACEBOOK_COOKIES")}
+    except ValueError:
+        return HEADERS
+
+
+def pagina(url):
+    try:
+        with urlopen(Request(url, headers=cabecalhos()), timeout=20) as response:
+            if "/login" in response.geturl() or "/checkpoint" in response.geturl():
+                raise SessaoFacebook("www.facebook.com: pede login (sessão expirada ou bloqueada)")
+            return response.read().decode("utf-8", "replace")
+    except HTTPError as error:
+        raise RuntimeError(f"www.facebook.com: HTTP {error.code}") from None
+    except (URLError, OSError):
+        raise RuntimeError("www.facebook.com: falha de ligação") from None
+
+
+class SessaoFacebook(RuntimeError):
+    """O Facebook pediu login: os cookies têm de ser renovados."""
 
 
 COMBUSTIVEL_FB = {"GASOLINE": "Gasolina", "DIESEL": "Gasóleo", "HYBRID": "Híbrido", "PLUGIN_HYBRID": "Híbrido",
@@ -17,7 +43,7 @@ COMBUSTIVEL_FB = {"GASOLINE": "Gasolina", "DIESEL": "Gasóleo", "HYBRID": "Híbr
 
 def completar_facebook(anuncio):
     """A pesquisa do Facebook quase não traz km: a página do anúncio traz km, combustível, caixa e descrição."""
-    page = descarregar(anuncio["url"])
+    page = pagina(anuncio["url"])
     for block in re.findall(r'<script type="application/json"[^>]*>(.*?)</script>', page, re.S):
         if "vehicle_odometer_data" not in block:
             continue
@@ -54,15 +80,7 @@ def facebook(cidade, preco_min, preco_max, termo=None):
     query = urlencode({"minPrice": preco_min, "maxPrice": preco_max, "sortBy": "creation_time_descend",
                        "daysSinceListed": 1})
     url = f"https://www.facebook.com/marketplace/{quote(cidade)}/vehicles/?{query}"
-    try:
-        with urlopen(Request(url, headers=HEADERS), timeout=20) as response:
-            if "/login" in response.geturl():  # sem isto o bloqueio passava por "0 anúncios"
-                raise RuntimeError("www.facebook.com: pede login (bloqueado)")
-            page = response.read().decode("utf-8", "replace")
-    except HTTPError as error:
-        raise RuntimeError(f"www.facebook.com: HTTP {error.code}") from None
-    except (URLError, OSError):
-        raise RuntimeError("www.facebook.com: falha de ligação") from None
+    page = pagina(url)
     found = {}
     for block in re.findall(r'<script type="application/json"[^>]*>(.*?)</script>', page, re.S):
         try:

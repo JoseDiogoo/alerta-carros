@@ -1,6 +1,7 @@
 """Vigia dos sites: lê cada fonte ao seu ritmo, guarda e alerta."""
 
 import math
+import random
 import os
 import subprocess
 import sqlite3
@@ -12,7 +13,7 @@ from .anuncio import NOMES, completar_motor
 from .catalogo import identificar
 from .db import abrir_db, duplicado, fonte_vazia, guardar, limpar, reidentificar, vale_guardar
 from .fontes import PAGINADAS, detalhe
-from .fontes.facebook import facebook
+from .fontes.facebook import SessaoFacebook, facebook
 from .fontes.olx import olx
 from .fontes.standvirtual import standvirtual
 from .negocio import avaliar, candidato, interessa
@@ -101,7 +102,7 @@ def ciclo_facebook(db, config, so_guardar=False):
             total += len(anuncios)
             for anuncio in anuncios:
                 processar(db, anuncio, config, referencia)
-            time.sleep(1)
+            time.sleep(random.uniform(15, 45))  # ritmo humano: com sessão de conta, rajadas dão bloqueio
     return total, referencia
 
 
@@ -207,6 +208,17 @@ def vigiar(origem, caminho, config, parar, so_guardar=False, erros=None):
                           + (" (referência inicial)" if referencia else ""), flush=True)
             falhas = 0
             erros.pop(origem, None)
+        except SessaoFacebook as error:
+            # sessão morta: insistir só arrisca a conta. Avisa uma vez e pára o Facebook até à próxima execução.
+            erros[origem] = str(error)
+            print(f"{datetime.now():%H:%M:%S} Facebook: {error}. Parado até à próxima execução.", flush=True)
+            if not so_guardar:
+                try:
+                    send("Alerta Carros: o Facebook pediu login. Renova o secret FACEBOOK_COOKIES "
+                         "(c_user, xs, datr) no GitHub.")
+                except RuntimeError:
+                    pass
+            break
         except (RuntimeError, KeyError, TypeError, ValueError, sqlite3.Error) as error:
             falhas += 1
             erros[origem] = str(error)
