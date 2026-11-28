@@ -142,8 +142,9 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(bom, avariado)
         # Toyota (marcas_foco) tem um desconto mínimo mais baixo do que as outras marcas
         analise = {"mediana": 6000, "fiavel": True, "irreal": False, "avaria": {"inviaveis": []},
-                   "ratio": 0.8, "n": 12, "pontuacao": 80}
+                   "ratio": 0.8, "n": 12, "pontuacao": 80, "margem": 1000}
         config = {**self.config, "marcas_foco": ["toyota"], "desconto_foco": 0.15, "desconto_telegram": 0.30,
+                  "margem_minima_telegram": 0,
                   "comparaveis_telegram": 10, "pontuacao_minima": 75}
         self.assertTrue(melhor({"modelo": "toyota yaris"}, analise, config))
         self.assertFalse(melhor({"modelo": "renault clio"}, analise, config))
@@ -290,6 +291,27 @@ class Fiabilidade(unittest.TestCase):
             vigia.vigiar("olx", ":memory:", self.config, parar)
         self.assertEqual(len(vezes), 1)
         self.assertIn("IndexError", evento.call_args.args[3])
+
+
+class RegrasAlinhadas(unittest.TestCase):
+    def test_comparacao_rigorosa_e_margem_minima(self):
+        from alerta.mercado import comparar
+        db = abrir_db(":memory:")
+        linhas = [("a", 2010, 120000, "Gasolina"), ("b", 2011, 140000, "Gasolina"),   # contam
+                  ("c", 2012, 120000, "Gasolina"),                                     # ano +2: não
+                  ("d", 2010, 150000, "Gasolina"),                                     # km +30 mil: não
+                  ("e", 2010, 120000, "Gasóleo"), ("f", 2010, 120000, None)]          # outro ou sem combustível
+        for id_, ano, km, comb in linhas:
+            db.execute("INSERT INTO anuncios (origem, id, modelo, preco, ano, km, combustivel) "
+                       "VALUES ('olx', ?, 'toyota yaris', 4000, ?, ?, ?)", (id_, ano, km, comb))
+        alvo = carro("olx", "x", "Toyota Yaris", 3000, "u", km=120000, ano=2010, combustivel="Gasolina",
+                     modelo="toyota yaris")
+        self.assertEqual(comparar(db, alvo)["n"], 2)
+        analise = {"mediana": 6000, "fiavel": True, "irreal": False, "avaria": {"inviaveis": []},
+                   "ratio": 0.85, "n": 12, "pontuacao": 80, "margem": 600}
+        config = {**load_config(EXEMPLO), "marcas_foco": ["toyota"]}
+        self.assertFalse(melhor({"modelo": "toyota yaris"}, analise, config))  # margem < 800 €
+        self.assertTrue(melhor({"modelo": "toyota yaris"}, {**analise, "margem": 900}, config))
 
 
 class DataPublicacao(unittest.TestCase):

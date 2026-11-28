@@ -4,6 +4,7 @@ import re
 import threading
 import time
 
+from . import registo
 from .anuncio import NOMES
 from .config import secret
 from .fontes.http import api
@@ -85,6 +86,9 @@ def mensagem(anuncio, analise, old_price):
              f"{analise['n']} carros comparáveis ({analise['nivel']})"]
     if old_price:
         lines.append(f"Baixou de {euros(old_price)}")
+    minutos = registo.atraso(anuncio)
+    if minutos is not None and 15 < minutos <= 7 * 24 * 60:  # chegou tarde: pode já estar vendido
+        lines.append(f"Publicado há {minutos / 60:.0f} h" if minutos >= 90 else f"Publicado há {minutos:.0f} min")
     if anuncio["avaliacao_site"]:
         lines.append(f"{NOMES[anuncio['origem']]}: {anuncio['avaliacao_site']}")
     if analise.get("fortes"):

@@ -83,6 +83,8 @@ def porque_nao(db, anuncio, config):
     desconto = config["desconto_foco"] if de_foco(anuncio, config) else config["desconto_telegram"]
     if analise["ratio"] > 1 - desconto:
         return f"desconto insuficiente ({analise['desconto']}%)"
+    if analise["margem"] < config["margem_minima_telegram"]:
+        return f"margem pequena ({analise['margem']} €)"
     if analise["n"] < config["comparaveis_telegram"]:
         return f"poucos comparáveis ({analise['n']})"
     if analise["pontuacao"] < config["pontuacao_minima"]:
@@ -109,4 +111,5 @@ def melhor(anuncio, analise, config):
         return False  # peças, problemas legais ou estruturais: não é negócio
     desconto = config["desconto_foco"] if de_foco(anuncio, config) else config["desconto_telegram"]
     return (analise["ratio"] <= 1 - desconto and analise["n"] >= config["comparaveis_telegram"]
+            and analise["margem"] >= config["margem_minima_telegram"]
             and analise["pontuacao"] >= config["pontuacao_minima"])

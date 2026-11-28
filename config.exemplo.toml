@@ -14,7 +14,7 @@ km_max = 250000
 km_ano_max = 20000             # média de km por ano de idade
 apenas_nacionais = false
 
-# Valor de mercado = mediana de carros iguais (modelo, combustível, motor, caixa, ano ±2, km parecidos),
+# Valor de mercado = mediana de carros iguais (modelo, combustível igual, caixa e motor se houver, ano ±1, km ±25 000),
 # com cada preço ajustado à diferença de ano e km. Margem = valor × fator_venda − preço − custos_revenda
 # (num carro com avaria a margem é a do carro como se estivesse bom: a reparação não é estimada).
 custos_revenda = 500           # inspeção, limpeza, pequenas reparações, anúncio (€)
@@ -32,13 +32,15 @@ preco_max_guardar = 15000      # acima disto nem se guarda: não serve de compar
 desconto_telegram = 0.30       # preço pelo menos 30% abaixo do valor de mercado
 desconto_foco = 0.10           # nas marcas_foco (Toyota) basta 10% abaixo
 comparaveis_telegram = 6       # valor de mercado tirado de pelo menos 6 carros iguais
+margem_minima_telegram = 800   # e lucro estimado de pelo menos 800 € (já com os custos de revenda)
 pontuacao_minima = 65          # avaliação 0-100 (mercado, km, descrição, donos, garantia...); avarias não tiram pontos
 so_foco_telegram = true        # true = o Telegram só avisa das marcas_foco (qualquer site); as outras marcas ficam só no painel
 marcas_foco = ["toyota"]       # critério mais solto no Telegram, aba própria no painel e mercado lido mais a fundo
 alertar_todos = false          # true = Telegram recebe TODOS os anúncios novos dentro dos filtros
 max_alertas_todos = 40         # máximo desses alertas por cada 30 min
 
-fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"]
+# Facebook desligado: pede login desde 24-nov (a voltar quando houver uma forma grátis e estável)
+fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox"]
 facebook_cidades = ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"]
 facebook_cada_minutos = 60       # pausa entre voltas; conta sinalizada pelo Facebook (23-nov): menos pedidos
 facebook_faixas = 2            # o Facebook devolve 24 por página de veículos: divide o preço em faixas

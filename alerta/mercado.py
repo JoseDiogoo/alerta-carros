@@ -80,25 +80,25 @@ def _parecido(valor, alvo, tolerancia, aceita_desconhecido):
 def comparar(db, anuncio, minimo=1, largo=False):
     """Valor de mercado rigoroso.
 
-    1. Só carros do mesmo modelo, combustível, ano ±2 e km parecidos.
+    1. Só carros do mesmo modelo e combustível, ano ±1 e km ±25 000 (alinhado com o utilizador, 28-nov).
     2. Procura primeiro os de motor (cilindrada, potência) e caixa iguais; só alarga se forem poucos.
     3. Ajusta o preço de cada um à diferença de ano e de km (desvalorização aprendida por modelo).
     4. Tira preços absurdos (peças, erros) e usa a mediana.
 
-    largo=True (só o painel, nunca o Telegram): km ±80 % e aceita comparáveis sem km (sem ajuste de km).
+    largo=True (só o painel, nunca o Telegram): ano ±2, km ±80 % e aceita comparáveis sem km (sem ajuste de km).
     """
     vazio = {"mediana": None, "prudente": None, "n": 0, "km_mediano": None, "nivel": None, "dispersao": None}
     if not (anuncio.get("modelo") and anuncio["ano"]):
         return vazio
     sql = ("SELECT preco, km, ano, caixa, cilindrada, potencia, origem, id FROM anuncios "
            "WHERE modelo = ? AND ano BETWEEN ? AND ? AND NOT (origem = ? AND id = ?) AND preco >= 300")
-    # ano ±2 e km ±45%: cada preço é depois ajustado à diferença de ano e km, por isso a janela pode ser larga
-    args = [anuncio["modelo"], anuncio["ano"] - 2, anuncio["ano"] + 2, anuncio["origem"], anuncio["id"]]
-    if anuncio.get("combustivel"):  # um híbrido vale bem mais do que o mesmo modelo a gasolina
-        sql += " AND (combustivel = ? OR combustivel IS NULL)"
+    anos = 2 if largo else 1
+    args = [anuncio["modelo"], anuncio["ano"] - anos, anuncio["ano"] + anos, anuncio["origem"], anuncio["id"]]
+    if anuncio.get("combustivel"):  # um híbrido vale bem mais do que o mesmo modelo a gasolina: tem de ser igual
+        sql += " AND (combustivel = ? OR combustivel IS NULL)" if largo else " AND combustivel = ?"
         args.append(anuncio["combustivel"])
     if anuncio["km"]:  # só compara com km parecidos: sem amostra não há estimativa (melhor que um valor errado)
-        margem_km = max(50000, anuncio["km"] * 0.8) if largo else max(35000, anuncio["km"] * 0.45)
+        margem_km = max(50000, anuncio["km"] * 0.8) if largo else 25000
         sql += " AND (km IS NULL OR km BETWEEN ? AND ?)" if largo else " AND km BETWEEN ? AND ?"
         args += [anuncio["km"] - margem_km, anuncio["km"] + margem_km]
     unicos = {}
