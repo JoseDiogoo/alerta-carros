@@ -3,8 +3,10 @@
 import sqlite3
 import threading
 import time
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -80,7 +82,7 @@ CAMINHO_DB = ROOT / "painel.sqlite3"
 # ---------- dados: a vigia (GitHub Actions) recolhe, o painel só lê ----------
 
 PASTA = ROOT / ".dados"
-VERIFICAR_BASE_SEGUNDOS = 120  # a vigia publica de 5 em 5 min; o painel vê se há nova de 2 em 2
+VERIFICAR_BASE_SEGUNDOS = 30  # a vigia publica de 2 em 2 min; o painel vê se há nova de 30 em 30 s
 CAMINHO_FAVORITOS = PASTA / "favoritos.sqlite3"  # disco da Streamlit Cloud: perde-se nos reinícios
 
 
@@ -95,7 +97,7 @@ def _estado():
 
 
 def estado():
-    """Liga à base mais recente da vigia (muda a cada ≤5 min), sem nunca escrever nela."""
+    """Liga à base mais recente da vigia (muda a cada ~2 min), sem nunca escrever nela."""
     s = _estado()
     if s["db"] and time.time() - s["verificada"] < VERIFICAR_BASE_SEGUNDOS:
         return s
@@ -180,6 +182,8 @@ with st.sidebar:
                            key="f_preco")
     f["ano"] = st.slider("Ano", 1960, ANO_MAX, (entre(BASE["ano_min"], 1960, ANO_MAX), ANO_MAX), key="f_ano")
     f["km"] = st.slider("Km máximos", 10000, 400000, entre(BASE["km_max"], 10000, 400000), 10000, key="f_km")
+    f["desconhecidos"] = st.checkbox("Incluir carros sem km ou sem ano", False, key="f_desconhecidos",
+                                     help="Desligado, os filtros de ano e km só mostram carros com esses dados.")
     todos_modelos = modelos_conhecidos()
     marcas = st.multiselect("Marca", com_escolhidos(marcas_conhecidas(), "f_marcas"),
                             format_func=str.title, placeholder="Todas", key="f_marcas")
@@ -213,13 +217,20 @@ with st.sidebar:
                f"≥{BASE['comparaveis_telegram']} comparáveis e pontuação ≥{BASE['pontuacao_minima']}.")
 
 
+def filtro_base():
+    """Preço, ano e km (SQL). Sem km ou sem ano só passa se o utilizador pedir."""
+    falta = ("{} IS NULL OR " if f["desconhecidos"] else "")
+    sql = (f"preco BETWEEN ? AND ? AND ({falta.format('ano')}ano BETWEEN ? AND ?) "
+           f"AND ({falta.format('km')}km <= ?)")
+    return sql, [*f["preco"], *f["ano"], f["km"]]
+
+
 def candidatos(limite=3000, marca=None):
     """Anúncios que passam os filtros de base (SQL), mais recentes primeiro. marca: só essa marca."""
     marcas_sel, modelos_sel = ([marca], []) if marca else (marcas, modelos)
     colunas, recente = selecao(estado()["db"])
-    sql = [f"SELECT {colunas} FROM anuncios WHERE preco BETWEEN ? AND ? "
-           "AND (ano IS NULL OR ano BETWEEN ? AND ?) AND (km IS NULL OR km <= ?)"]
-    args = [*f["preco"], *f["ano"], f["km"]]
+    base, args = filtro_base()
+    sql = [f"SELECT {colunas} FROM anuncios WHERE {base}"]
     for coluna, valores in (("modelo", modelos_sel), ("combustivel", f["combustivel"]), ("caixa", f["caixa"]),
                             ("origem", f["sites"])):
         if valores:
@@ -411,6 +422,35 @@ def tabela(lista_):
                            "ano": st.column_config.NumberColumn(format="%d")})
 
 
+def hora(iso, formato="%d/%m %H:%M"):
+    """Data da base (UTC) na hora de Portugal."""
+    return datetime.fromisoformat(iso).astimezone(ZoneInfo("Europe/Lisbon")).strftime(formato)
+
+
+def saude(db):
+    """O que a vigia registou: última hora por site, decisões nos anúncios novos e erros recentes."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'saude'").fetchone():
+        return  # base publicada por uma vigia anterior aos registos
+    desde = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    st.markdown("**Vigia na última hora** (atraso: minutos entre a publicação no site e a primeira leitura)")
+    linhas = db.execute(
+        "SELECT origem, SUM(ciclos), SUM(falhas), SUM(novos), ROUND(AVG(atraso_min), 1), MAX(quando), MAX(erro) "
+        "FROM saude WHERE quando >= ? GROUP BY origem", (desde,)).fetchall()
+    st.dataframe(pd.DataFrame([{"leitura": NOMES.get(r[0], r[0]), "ciclos": r[1], "falhas": r[2], "novos": r[3],
+                                "atraso médio (min)": r[4], "resumo": hora(r[5]), "um dos erros": r[6]}
+                               for r in linhas]), hide_index=True, width="stretch")
+    st.markdown("**Anúncios novos nas últimas 24 h: o que aconteceu**")
+    dia = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    resultados = Counter(r[0].split(" (")[0] for r in db.execute(
+        "SELECT resultado FROM decisoes WHERE quando >= ?", (dia,)))
+    st.dataframe(pd.DataFrame(resultados.most_common(), columns=["resultado", "anúncios"]), hide_index=True)
+    eventos = db.execute("SELECT quando, nivel, origem, mensagem FROM eventos ORDER BY quando DESC LIMIT 30").fetchall()
+    if eventos:
+        st.markdown("**Últimos erros e alarmes**")
+        st.dataframe(pd.DataFrame([{"quando": hora(q), "nível": n, "onde": NOMES.get(o, o), "mensagem": m}
+                                   for q, n, o, m in eventos]), hide_index=True, width="stretch")
+
+
 @st.fragment(run_every=ATUALIZAR_SEGUNDOS)
 def painel():
     s = estado()
@@ -424,7 +464,7 @@ def painel():
              help="Mesmo critério do Telegram (muito abaixo de um valor de mercado fiável), de todas as marcas. "
                   "O Telegram só avisa das marcas em foco (Toyota).")
     ultimo = s["db"].execute("SELECT MAX(atualizado_em) FROM anuncios").fetchone()[0]
-    d.metric("Último anúncio lido", datetime.fromisoformat(ultimo).astimezone().strftime("%H:%M:%S") if ultimo else "—")
+    d.metric("Último anúncio lido", hora(ultimo, "%H:%M:%S") if ultimo else "—")
     for origem, erro in list(s["erros"].items()):
         st.warning(f"{NOMES.get(origem, 'Base de dados')}: {erro}")
     with st.expander("Estado dos sites"):
@@ -437,10 +477,10 @@ def painel():
         st.dataframe(pd.DataFrame([{
             "site": NOMES[o], "anúncios (24 h)": por_site.get(o, (0, 0, None))[0],
             "com modelo certo": por_site.get(o, (0, 0, None))[1] or 0,
-            "última leitura": (datetime.fromisoformat(por_site[o][2]).astimezone().strftime("%d/%m %H:%M")
-                               if o in por_site else "—"),
+            "última leitura": hora(por_site[o][2]) if o in por_site else "—",
             "estado": f"erro: {s['erros'][o]}" if o in s["erros"] else ("ok" if o in por_site else "sem anúncios"),
         } for o in FONTES]), hide_index=True, width="stretch")
+        saude(s["db"])
     o1, o2, o3 = st.columns([2, 1, 2], vertical_alignment="bottom")
     ordem = o1.selectbox("Ordenar por", list(ORDENS), key="ordem")
     quantos = o2.selectbox("Mostrar", [24, 48, 96, 200], key="quantos")
@@ -566,15 +606,16 @@ with mercado_tab:
 
 
 with procura:
-    st.caption("Procura na base da vigia (todos os sites) por marca e modelo.")
+    st.caption("Procura na base da vigia (todos os sites) por marca e modelo, com os filtros de preço, ano e km.")
     texto = st.text_input("Marca e modelo", "Toyota Yaris")
     termos = words(texto).split()
     if termos:
         colunas, recente = selecao(estado()["db"])
-        sql = (f"SELECT {colunas} FROM anuncios WHERE (removido IS NULL OR removido = 0) AND preco >= 300 "
+        base, args = filtro_base()
+        sql = (f"SELECT {colunas} FROM anuncios WHERE (removido IS NULL OR removido = 0) AND {base} "
                + "AND (coalesce(modelo, '') || ' ' || titulo) LIKE ? " * len(termos) + f"ORDER BY {recente} DESC LIMIT 400")
         db = estado()["db"]
-        lidos = [carro(**dict(zip(COLUNAS, r))) for r in db.execute(sql, [f"%{t}%" for t in termos])]
+        lidos = [carro(**dict(zip(COLUNAS, r))) for r in db.execute(sql, [*args, *(f"%{t}%" for t in termos)])]
         resultado = sorted((analisar(a, db) for a in lidos),
                            key=lambda x: -(x["margem"] if x["margem"] is not None else -10**9))
         st.caption(f"{len(lidos)} anúncios · {sum(1 for x in resultado if x['bom'])} negócios")

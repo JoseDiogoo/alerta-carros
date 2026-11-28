@@ -2,6 +2,7 @@
 
 import json
 import re
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,7 +22,7 @@ def api(service, url, data=None):
             return json.load(response)
     except HTTPError as error:
         raise RuntimeError(f"{service}: HTTP {error.code}") from None
-    except (URLError, OSError, ValueError):
+    except (URLError, HTTPException, OSError, ValueError):
         raise RuntimeError(f"{service}: ligação ou resposta inválida") from None
 
 
@@ -32,7 +33,7 @@ def descarregar(url):
             return response.read().decode("utf-8", "replace")
     except HTTPError as error:
         raise RuntimeError(f"{site}: HTTP {error.code}") from None
-    except (URLError, OSError):
+    except (URLError, HTTPException, OSError):
         raise RuntimeError(f"{site}: falha de ligação") from None
 
 
@@ -51,7 +52,7 @@ def ainda_existe(url):
             pagina = response.read(200000).decode("utf-8", "replace")
     except HTTPError as error:
         return False if error.code in (404, 410) else None
-    except (URLError, OSError):
+    except (URLError, HTTPException, OSError):
         return None
     if "gone=1" in final:  # CustoJusto manda os eliminados para a pesquisa
         return False

@@ -29,5 +29,7 @@ def completar_custojusto(anuncio):
     """A lista do CustoJusto quase nunca traz km: a página do anúncio traz a faixa."""
     data = next_data(descarregar(anuncio["url"]))
     params = next(o for o in walk(data) if "mileage" in o)  # o 1.º é o do anúncio (os outros são sugestões)
-    anuncio["km"] = km_da_faixa(params["mileage"]) or anuncio["km"]
+    faixa = km_da_faixa(params["mileage"])  # campo do anúncio: vale mais do que um número apanhado no texto
+    if faixa:
+        anuncio["km"], anuncio["km_certo"] = faixa, 1
     anuncio["ano"] = anuncio["ano"] or inteiro(params.get("regdate"))

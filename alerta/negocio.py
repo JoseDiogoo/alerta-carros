@@ -54,6 +54,42 @@ def avaliar(db, anuncio, config):
     return analise if melhor(anuncio, analise, config) else None
 
 
+def porque_nao(db, anuncio, config):
+    """Porque é que um anúncio novo não foi para o Telegram (para o registo de decisões)."""
+    if not anuncio.get("modelo"):
+        return "sem modelo certo"
+    if excluido(anuncio, config):
+        return "excluído por palavras"
+    if apenas_foco(config) and not de_foco(anuncio, config):
+        return "marca fora do foco"
+    price, km, year = anuncio["preco"], anuncio["km"], anuncio["ano"]
+    if not config["preco_min"] <= price <= config["preco_max"]:
+        return "fora do preço"
+    if year and year < config["ano_min"]:
+        return "ano antigo de mais"
+    if km and km > config["km_max"]:
+        return "km a mais"
+    if not dentro_dos_limites(anuncio, config):
+        return "km por ano a mais ou importado"
+    analise = analisar(db, anuncio, config)
+    if analise["mediana"] is None:
+        return f"poucos comparáveis ({analise['n']})"
+    if not analise["fiavel"]:
+        return "preços de mercado dispersos"
+    if analise["irreal"]:
+        return "preço irreal"
+    if analise["avaria"]["inviaveis"]:
+        return "peças ou problema legal"
+    desconto = config["desconto_foco"] if de_foco(anuncio, config) else config["desconto_telegram"]
+    if analise["ratio"] > 1 - desconto:
+        return f"desconto insuficiente ({analise['desconto']}%)"
+    if analise["n"] < config["comparaveis_telegram"]:
+        return f"poucos comparáveis ({analise['n']})"
+    if analise["pontuacao"] < config["pontuacao_minima"]:
+        return f"pontuação baixa ({analise['pontuacao']})"
+    return "cumpre o critério mas não foi enviado"
+
+
 def apenas_foco(config):
     """O Telegram só avisa das marcas em foco? (sem marcas_foco não há filtro)"""
     return bool(config["so_foco_telegram"] and config["marcas_foco"])

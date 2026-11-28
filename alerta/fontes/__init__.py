@@ -22,8 +22,6 @@ __all__ = ["PAGINADAS", "COMPLETAR", "detalhe", "autopt", "autox", "custojusto",
 def detalhe(anuncio):
     """Lê a página do anúncio (descrição completa e características) para avaliar a fundo."""
     completar = COMPLETAR.get(anuncio["origem"])
-    if anuncio["origem"] == "custojusto" and anuncio["km"]:
-        completar = None  # a lista já trouxe os km
     try:
         if completar:
             completar(anuncio)

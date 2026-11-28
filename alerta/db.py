@@ -2,22 +2,32 @@
 
 import json
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 
 from . import avaliacao as av
+from . import registo
 from .catalogo import catalogo, identificar
 
 
 def abrir_db(path, **opcoes):
     db = sqlite3.connect(path, timeout=30, **opcoes)
-    db.execute("PRAGMA journal_mode = WAL")  # várias threads a ler e escrever ao mesmo tempo
+    for tentativa in range(30):  # várias threads a ler e escrever ao mesmo tempo
+        try:
+            if db.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                db.execute("PRAGMA journal_mode = WAL")  # não espera pelo timeout: outra thread pode estar a mudar
+            break
+        except sqlite3.OperationalError:
+            if tentativa == 29:
+                raise
+            time.sleep(1)
     db.execute("CREATE TABLE IF NOT EXISTS anuncios (origem TEXT, id TEXT, preco INTEGER, ano INTEGER, "
                "km INTEGER, alertado INTEGER DEFAULT 0, visto_em TEXT, titulo TEXT, url TEXT, local TEXT, "
                "PRIMARY KEY (origem, id))")
     colunas = {row[1] for row in db.execute("PRAGMA table_info(anuncios)")}
     for coluna in ("modelo", "foto", "combustivel", "caixa", "profissional", "importado", "sinais", "extras",
                    "cilindrada", "potencia", "carrocaria", "atualizado_em", "marca", "modelo_site", "modelo_fonte",
-                   "removido", "verificado_em", "publicado_em"):
+                   "removido", "verificado_em", "publicado_em", "km_certo", "detalhe_em"):
         if coluna not in colunas:
             db.execute(f"ALTER TABLE anuncios ADD COLUMN {coluna}")
     if "atualizado_em" not in colunas:
@@ -25,6 +35,7 @@ def abrir_db(path, **opcoes):
     db.execute("CREATE INDEX IF NOT EXISTS anuncios_modelo ON anuncios (modelo, ano)")  # comparáveis
     db.execute("CREATE INDEX IF NOT EXISTS anuncios_visto ON anuncios (visto_em)")  # mais recentes (painel)
     db.execute("CREATE INDEX IF NOT EXISTS anuncios_atualizado ON anuncios (atualizado_em)")  # limpeza
+    registo.preparar(db)
     if db.execute("PRAGMA user_version").fetchone()[0] < 8:
         # versões antigas adivinhavam o modelo pelo título: esses modelos deixam de contar. Cada anúncio
         # volta a ter modelo quando for lido de novo (campos do site) ou pelo catálogo (reidentificar).
@@ -32,6 +43,11 @@ def abrir_db(path, **opcoes):
             db.execute("UPDATE anuncios SET modelo = NULL, modelo_fonte = NULL "
                        "WHERE modelo_fonte IS NULL OR modelo_fonte != 'site'")
         db.execute("PRAGMA user_version = 8")
+    if db.execute("PRAGMA user_version").fetchone()[0] < 9:
+        # os km do CustoJusto vinham do texto ou do meio da faixa: voltam a ser lidos do campo do anúncio
+        with db:
+            db.execute("UPDATE anuncios SET km_certo = NULL, detalhe_em = NULL WHERE origem = 'custojusto'")
+        db.execute("PRAGMA user_version = 9")
     return db
 
 
@@ -53,8 +69,8 @@ def guardar(db, anuncio, alertado):
         db.execute(
             "INSERT INTO anuncios (origem, id, modelo, preco, ano, km, alertado, visto_em, titulo, url, local, "
             "foto, combustivel, caixa, profissional, importado, sinais, extras, cilindrada, potencia, carrocaria, "
-            "atualizado_em, marca, modelo_site, modelo_fonte, publicado_em) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "atualizado_em, marca, modelo_site, modelo_fonte, publicado_em, km_certo) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (origem, id) DO UPDATE SET preco = excluded.preco, "
             # um modelo certo nunca é apagado por uma leitura sem modelo (ex.: lista sem campos)
             "modelo_fonte = CASE WHEN excluded.modelo IS NOT NULL THEN excluded.modelo_fonte ELSE modelo_fonte END, "
@@ -62,7 +78,10 @@ def guardar(db, anuncio, alertado):
             "modelo_site = coalesce(excluded.modelo_site, modelo_site), "
             "atualizado_em = excluded.atualizado_em, removido = 0, "
             "publicado_em = coalesce(excluded.publicado_em, publicado_em), "
-            "ano = coalesce(excluded.ano, ano), km = coalesce(excluded.km, km), "
+            "ano = coalesce(excluded.ano, ano), "
+            # km do campo do anúncio não são substituídos por um número apanhado no texto da lista
+            "km = CASE WHEN km_certo = 1 AND excluded.km_certo IS NULL THEN km ELSE coalesce(excluded.km, km) END, "
+            "km_certo = coalesce(excluded.km_certo, km_certo), "
             "alertado = max(alertado, excluded.alertado), foto = coalesce(excluded.foto, foto), "
             "sinais = excluded.sinais, extras = coalesce(excluded.extras, extras), "
             "combustivel = coalesce(excluded.combustivel, combustivel), caixa = coalesce(excluded.caixa, caixa), "
@@ -76,7 +95,7 @@ def guardar(db, anuncio, alertado):
              json.dumps(anuncio["extras"]) if anuncio.get("extras") else None,
              anuncio.get("cilindrada"), anuncio.get("potencia"), anuncio.get("carrocaria"), agora,
              anuncio.get("marca"), anuncio.get("modelo_site"), anuncio.get("modelo_fonte"),
-             anuncio.get("publicado_em")))
+             anuncio.get("publicado_em"), anuncio.get("km_certo")))
 
 
 def limpar(db, config):
@@ -89,6 +108,8 @@ def limpar(db, config):
     Devolve o número de anúncios apagados.
     """
     reidentificar(db)
+    with db:  # km impossíveis guardados antes (ver texto.km_plausivel)
+        db.execute("UPDATE anuncios SET km = NULL WHERE km < 1000 AND ano <= ?", (datetime.now(UTC).year - 2,))
     limite = (datetime.now(UTC) - timedelta(days=config["retencao_dias"])).isoformat()
     favoritos = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'favoritos_v2'").fetchone()
     protegidos = " AND (origem, id) NOT IN (SELECT origem, id FROM favoritos_v2)" if favoritos else ""

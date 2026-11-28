@@ -28,9 +28,14 @@ class MonitorTest(unittest.TestCase):
         self.addCleanup(self.db.close)
         self.config = load_config(EXEMPLO)
         self.config["marcas_foco"] = []  # sem pedidos reais aos sites nos testes
+        self.config["feed_com_teto"] = []
+        for alvo in ("alerta.vigia.detalhe", ):
+            sem_rede = patch(alvo, side_effect=lambda a: a)
+            sem_rede.start()
+            self.addCleanup(sem_rede.stop)
         self.paginas = {}
         patcher = patch.dict(PAGINADAS, {
-            origem: (lambda pagina, origem=origem: iter(self.paginas.get((origem, pagina), [])))
+            origem: (lambda pagina, origem=origem, **_: iter(self.paginas.get((origem, pagina), [])))
             for origem in ("olx", "standvirtual", "custojusto", "autopt", "autox")})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -104,7 +109,7 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(estado, {"vivo": 0, "morto": 1, "duvida": None})  # dúvida: fica por verificar
         with patch("alerta.vigia.ainda_existe") as outra:  # já verificados há pouco: não volta a abrir os sites
             verificar(self.db, self.config)
-        self.assertEqual(outra.call_count, 1)  # só o que ficou em dúvida
+        self.assertEqual(outra.call_count, 0)  # o que ficou em dúvida só se repete daqui a 30 min
 
     def test_avariados_entram_com_etiqueta(self):
         self.config["so_foco_telegram"] = False  # (todas as marcas: o filtro Toyota tem teste próprio)
@@ -135,10 +140,11 @@ class MonitorTest(unittest.TestCase):
         bom = av.pontuar({"km": 120000}, mercado, av.sinais_do_texto("Yaris", ""), {})[0]
         avariado = av.pontuar({"km": 120000}, mercado, av.sinais_do_texto("Yaris", "Motor avariado."), {})[0]
         self.assertEqual(bom, avariado)
-        # Toyota (marcas_foco) basta 20% abaixo; as outras marcas precisam de 30%
+        # Toyota (marcas_foco) tem um desconto mínimo mais baixo do que as outras marcas
         analise = {"mediana": 6000, "fiavel": True, "irreal": False, "avaria": {"inviaveis": []},
                    "ratio": 0.8, "n": 12, "pontuacao": 80}
-        config = {**self.config, "marcas_foco": ["toyota"]}
+        config = {**self.config, "marcas_foco": ["toyota"], "desconto_foco": 0.15, "desconto_telegram": 0.30,
+                  "comparaveis_telegram": 10, "pontuacao_minima": 75}
         self.assertTrue(melhor({"modelo": "toyota yaris"}, analise, config))
         self.assertFalse(melhor({"modelo": "renault clio"}, analise, config))
         self.assertFalse(melhor({"modelo": "toyota yaris"}, {**analise, "n": 8}, config))
@@ -146,7 +152,9 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(texto.combustivel_do_titulo("VW Golf 1.0 TSI"), "Gasolina")
         self.assertEqual(texto.cilindrada_do_texto("Renault Clio 1.5 dCi 90cv"), 1500)
         self.assertEqual(texto.potencia_do_texto("Renault Clio 1.5 dCi 90cv"), 90)
-        self.assertEqual(texto.km_da_faixa("190 000 - 199 999"), 195000)
+        self.assertEqual(texto.km_da_faixa("190 000 - 199 999"), 199999)
+        self.assertIsNone(texto.km_plausivel(219, 2009))
+        self.assertEqual(texto.km_plausivel(219000, 2009), 219000)
 
     def test_explorar_sobrevive_a_site_mudado(self):
         def partido(pagina, **_):
@@ -234,6 +242,54 @@ class MonitorTest(unittest.TestCase):
         with patch("alerta.vigia.send", side_effect=RuntimeError("Telegram em baixo")):
             ciclo_paginado(self.db, "olx", self.config)  # não aborta: regista e segue
         self.assertEqual(len(self.ciclo(p1=[yaris("novo", 4000)])), 1)
+
+
+class Fiabilidade(unittest.TestCase):
+    def setUp(self):
+        self.db = abrir_db(":memory:")
+        self.addCleanup(self.db.close)
+        self.config = {**load_config(EXEMPLO), "marcas_foco": ["toyota"]}
+        for i in range(10):
+            vigia.processar(self.db, yaris(f"m{i}", 6000 + i * 10), self.config, referencia=True)
+
+    def test_exploracao_alerta_so_o_que_e_recente(self):
+        from datetime import UTC, datetime, timedelta
+        ha = lambda minutos: (datetime.now(UTC) - timedelta(minutes=minutos)).isoformat()
+        with patch("alerta.vigia.send") as send, patch("alerta.vigia.detalhe"):
+            vigia.processar(self.db, yaris("velho", 3800, km=118000, publicado_em=ha(5000)), self.config, True,
+                            "mercado", True)
+            self.assertEqual(send.call_count, 0)
+            vigia.processar(self.db, yaris("agora", 3800, km=121000, publicado_em=ha(30)), self.config, True,
+                            "mercado", True)
+            self.assertEqual(send.call_count, 1)
+        self.assertEqual(self.db.execute("SELECT via, resultado FROM decisoes").fetchall(), [("mercado", "alerta")])
+
+    def test_decisao_diz_porque_nao_alertou(self):
+        with patch("alerta.vigia.send"), patch("alerta.vigia.detalhe"):
+            vigia.processar(self.db, yaris("muitos", 3800, km=300000), self.config, False)
+        self.assertEqual(self.db.execute("SELECT resultado FROM decisoes").fetchone()[0], "km a mais")
+
+    def test_km_da_pagina_nao_e_substituido_pelo_texto(self):
+        from alerta.db import guardar
+        base = dict(marca="toyota", modelo_site="yaris", modelo="toyota yaris", ano=2008)
+        for extra in ({"km": 199999, "km_certo": 1}, {"km": 5248}):
+            guardar(self.db, carro("custojusto", "k", "Yaris", 3000, "u", **base, **extra), alertado=False)
+        self.assertEqual(self.db.execute("SELECT km FROM anuncios WHERE id = 'k'").fetchone()[0], 199999)
+
+    def test_erro_inesperado_nao_cala_o_site(self):
+        import threading
+        parar, vezes = threading.Event(), []
+
+        def rebenta(*_):
+            vezes.append(1)
+            parar.set()
+            raise IndexError("o site mudou")
+        with patch("alerta.vigia.ciclo_paginado", side_effect=rebenta), \
+                patch("alerta.vigia.abrir_db", return_value=abrir_db(":memory:")), \
+                patch("alerta.vigia.registo.evento") as evento:
+            vigia.vigiar("olx", ":memory:", self.config, parar)
+        self.assertEqual(len(vezes), 1)
+        self.assertIn("IndexError", evento.call_args.args[3])
 
 
 class DataPublicacao(unittest.TestCase):

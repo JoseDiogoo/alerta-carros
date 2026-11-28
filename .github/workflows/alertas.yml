@@ -64,8 +64,13 @@ jobs:
           path: config.sqlite3
           key: estado-${{ github.run_id }}
 
+      - name: Esperar depois de um erro
+        if: failure()
+        run: sleep 120  # um erro repetido não fica em ciclo apertado
+
       - name: Relançar a vigia
-        # só se correu bem: um erro não fica em ciclo; o agendamento de hora a hora retoma
+        # também depois de um erro (o agendamento do GitHub atrasa-se horas); não se for cancelada à mão
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run alertas.yml --repo "${{ github.repository }}" --ref main

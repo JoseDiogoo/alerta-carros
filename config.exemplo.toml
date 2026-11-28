@@ -43,6 +43,13 @@ facebook_cidades = ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evo
 facebook_cada_minutos = 60       # pausa entre voltas; conta sinalizada pelo Facebook (23-nov): menos pedidos
 facebook_faixas = 2            # o Facebook devolve 24 por página de veículos: divide o preço em faixas
 
+# Atualidade e vigilância
+alerta_exploracao_minutos = 180  # anúncio publicado há menos disto alerta mesmo que o ache a leitura do mercado
+feed_com_teto = ["olx"]        # lê também a pesquisa com teto de preço (no OLX costuma chegar mais cedo)
+publicar_cada_minutos = 2      # de quantos em quantos minutos a base vai para o painel
+alarmes_telegram = true        # avisa no Telegram quando um site falha 15 min, se cala ou o painel não atualiza
+alarme_sem_novos_minutos = 180 # Standvirtual, OLX e CustoJusto sem nada novo há este tempo = alarme
+
 # Carros com avaria NÃO são excluídos: aparecem com a etiqueta AVARIA (sem estimar o custo).
 # Palavras no título que excluem o anúncio (só o que não se resolve com uma reparação)
 excluir = [

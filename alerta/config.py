@@ -32,6 +32,8 @@ PADROES = {
     "fontes": ["standvirtual", "olx", "custojusto", "autopt", "autox", "facebook"],
     "facebook_cidades": ["lisbon", "porto", "braga", "coimbra", "faro", "viseu", "evora"],
     "facebook_cada_minutos": 3, "facebook_faixas": 3,
+    "alerta_exploracao_minutos": 180, "feed_com_teto": [], "publicar_cada_minutos": 2,
+    "alarmes_telegram": True, "alarme_sem_novos_minutos": 180,
 }
 
 
@@ -42,7 +44,8 @@ def load_config(path):
         raise ValueError(f"Fontes válidas: {', '.join(NOMES)}.")
     for key in ("intervalo_segundos", "paginas_max", "paginas_semente", "paginas_exploracao", "min_comparaveis",
                 "comparaveis_telegram", "facebook_cada_minutos", "facebook_faixas", "retencao_dias",
-                "preco_max_guardar"):
+                "preco_max_guardar", "alerta_exploracao_minutos", "publicar_cada_minutos",
+                "alarme_sem_novos_minutos"):
         if type(config[key]) is not int or config[key] < 1:
             raise ValueError(f"{key} tem de ser um número inteiro positivo.")
     if config["intervalo_segundos"] < 10:

@@ -108,9 +108,19 @@ def combustivel_do_titulo(titulo):
 
 
 def km_da_faixa(valor):
-    """CustoJusto dá os km por faixa ("190 000 - 199 999"): usa o meio."""
+    """CustoJusto dá os km por faixa ("190 000 - 199 999"): usa o limite de cima, para um filtro de km
+    máximos nunca deixar passar um carro que pode ter mais."""
     numeros = [int(re.sub(r"\D", "", n)) for n in re.findall(r"\d[\d\s .]*\d|\d", str(valor or ""))]
-    return round(sum(numeros) / len(numeros)) if numeros and 0 < max(numeros) < 1_000_000 else None
+    return max(numeros) if numeros and 0 < max(numeros) < 1_000_000 else None
+
+
+def km_plausivel(km, ano):
+    """Um carro com 2 ou mais anos e menos de 1000 km é quase sempre "219" a querer dizer 219 mil, ou um valor
+    posto à toa: fica desconhecido (não se adivinha)."""
+    from datetime import date
+    if km and ano and km < 1000 and date.today().year - ano >= 2:
+        return None
+    return km
 
 
 def euros(valor):
