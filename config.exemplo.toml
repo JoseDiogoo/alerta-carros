@@ -38,6 +38,8 @@ so_foco_telegram = true        # true = o Telegram só avisa das marcas_foco (qu
 marcas_foco = ["toyota"]       # critério mais solto no Telegram, aba própria no painel e mercado lido mais a fundo
 alertar_todos = false          # true = Telegram recebe TODOS os anúncios novos dentro dos filtros
 max_alertas_todos = 40         # máximo desses alertas por cada 30 min
+resumo_diario = true           # às resumo_hora (Lisboa): os 5 "quase bons" das marcas em foco das últimas 24 h
+resumo_hora = 8
 
 # Facebook desligado: pede login desde 24-nov (a voltar quando houver uma forma grátis e estável)
 fontes = ["standvirtual", "olx", "custojusto", "autopt", "autox"]

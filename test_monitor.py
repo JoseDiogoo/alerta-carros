@@ -314,6 +314,21 @@ class RegrasAlinhadas(unittest.TestCase):
         self.assertTrue(melhor({"modelo": "toyota yaris"}, {**analise, "margem": 900}, config))
 
 
+class ResumoDiario(unittest.TestCase):
+    def test_envia_uma_vez_por_dia_com_os_quase_bons(self):
+        db = abrir_db(":memory:")
+        config = {**load_config(EXEMPLO), "marcas_foco": ["toyota"], "resumo_hora": 0}
+        for i in range(10):
+            vigia.processar(db, yaris(f"m{i}", 6000 + i * 10), config, referencia=True)
+        vigia.processar(db, yaris("quase", 5000, km=121000), config, referencia=True)
+        db.execute("CREATE TABLE IF NOT EXISTS estado (chave TEXT PRIMARY KEY, valor INTEGER)")
+        with patch("alerta.vigia.send") as send:
+            self.assertTrue(vigia.resumo_diario(db, config))
+            self.assertFalse(vigia.resumo_diario(db, config))  # já foi hoje
+        self.assertEqual(send.call_count, 1)
+        self.assertIn("5 000 €", send.call_args.args[0])
+
+
 class DataPublicacao(unittest.TestCase):
     def test_datas_de_sites_ordenam_em_utc(self):
         self.assertEqual(texto.data_utc("2026-11-23T14:51:30Z"), "2026-11-23T14:51:30+00:00")

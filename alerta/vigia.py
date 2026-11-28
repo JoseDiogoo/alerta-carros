@@ -11,6 +11,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
+from . import avaliacao as av
 from .anuncio import NOMES, carro, completar_motor
 from .catalogo import identificar
 from .db import abrir_db, duplicado, fonte_vazia, guardar, limpar, reidentificar, vale_guardar
@@ -23,7 +24,7 @@ from .fontes.olx import olx
 from .fontes.standvirtual import standvirtual
 from .negocio import apenas_foco, avaliar, candidato, de_foco, interessa, porque_nao
 from .telegram import mensagem, mensagem_simples, send
-from .texto import km_plausivel, words
+from .texto import euros, km_plausivel, words
 
 
 ENVIADOS_TODOS = [0]
@@ -416,6 +417,11 @@ def vigiar_tudo(caminho, config, minutos=None):
                     if publicacoes_falhadas >= 3:
                         mal["publicar"] = "A base não é publicada há várias tentativas: o painel está desatualizado."
                     avisar(db, config, mal, avisados)
+                    if config["resumo_diario"] and not config.get("so_guardar"):
+                        try:
+                            resumo_diario(db, config)
+                        except RuntimeError as error:  # Telegram em baixo: tenta no próximo período
+                            registo.evento(db, "erro", "telegram", f"resumo diário não enviado: {error}")
                 if os.environ.get("PUBLICAR_BASE") and tique % config["publicar_cada_minutos"] == 0:
                     publicacoes_falhadas = publicacoes_falhadas + 1 if publicar(caminho) else 0
             except Exception:  # noqa: BLE001
@@ -430,6 +436,65 @@ def vigiar_tudo(caminho, config, minutos=None):
         if os.environ.get("PUBLICAR_BASE"):
             publicar(caminho)
         print(f"{datetime.now():%H:%M:%S} Fim da vigia.", flush=True)
+
+
+def quase_bons(db, config, horas=24, quantos=5):
+    """Carros das marcas em foco vistos nas últimas horas que não deram alerta, pela margem estimada."""
+    from .mercado import analisar
+    from .negocio import dentro_dos_limites, excluido
+    desde = (datetime.now(UTC) - timedelta(hours=horas)).isoformat()
+    foco = [slug(m) for m in config["marcas_foco"]]
+    colunas = ["origem", "id", "titulo", "preco", "url", "ano", "km", "modelo", "combustivel", "caixa",
+               "cilindrada", "potencia", "marca", "sinais", "extras", "importado"]
+    linhas = db.execute(
+        f"SELECT {', '.join(colunas)} FROM anuncios WHERE visto_em >= ? AND alertado = 0 "
+        f"AND (removido IS NULL OR removido = 0) AND preco BETWEEN ? AND ? "
+        f"AND marca IN ({','.join('?' * len(foco))})",
+        (desde, config["preco_min"], config["preco_max"], *foco)).fetchall()
+    resultado = []
+    for linha in linhas:
+        a = carro(**dict(zip(colunas, linha)))
+        a["sinais"], a["extras"] = av.carregar(a["sinais"]) or None, av.carregar(a["extras"])
+        if not a["modelo"] or excluido(a, config) or not dentro_dos_limites(a, config):
+            continue
+        analise = analisar(db, a, config)
+        if analise["margem"] is None and a["ano"]:  # poucos carros iguais: comparação larga (só no resumo)
+            analise = analisar(db, a, config, largo=True)
+        if analise["margem"] is not None and analise["margem"] > 0 and not analise["irreal"]:
+            resultado.append((analise["margem"], a, analise))
+    resultado.sort(key=lambda x: -x[0])
+    unicos = {}  # o mesmo carro publicado em vários sites aparece uma vez
+    for margem, a, analise in resultado:
+        unicos.setdefault((a["modelo"], a["ano"], a["km"] or a["id"], a["preco"]), (margem, a, analise))
+    return list(unicos.values())[:quantos]
+
+
+def resumo_diario(db, config):
+    """Às config["resumo_hora"] (hora de Lisboa), uma vez por dia: os 5 "quase bons" das marcas em foco."""
+    from zoneinfo import ZoneInfo
+    agora = datetime.now(ZoneInfo("Europe/Lisbon"))
+    hoje = int(agora.strftime("%Y%m%d"))
+    db.execute("CREATE TABLE IF NOT EXISTS estado (chave TEXT PRIMARY KEY, valor INTEGER)")
+    feito = db.execute("SELECT valor FROM estado WHERE chave = 'resumo_diario'").fetchone()
+    if agora.hour < config["resumo_hora"] or (feito and feito[0] >= hoje):
+        return False
+    linhas = ["Resumo de ontem: os quase bons negócios "
+              + ", ".join(m.title() for m in config["marcas_foco"]) + " (não chegaram ao critério do alerta)"]
+    for i, (margem, a, analise) in enumerate(quase_bons(db, config), 1):
+        factos = [euros(a["preco"]), str(a["ano"] or "ano?"),
+                  f"{a['km']:,} km".replace(",", " ") if a["km"] else "sem km", a["combustivel"], a["caixa"]]
+        linhas.append(f"\n{i}. {a['titulo'][:60]}\n" + " · ".join(f for f in factos if f)
+                      + f"\nMercado ~{euros(analise['mediana'])} ({analise['desconto']}% abaixo, "
+                      f"{analise['n']} comparáveis{', comparação fraca' if analise.get('largo') else ''}) "
+                      f"· margem +{euros(margem)}"
+                      + (f"\n⚠️ AVARIA: {', '.join(analise['avaria']['itens'][:3])}" if analise["avaria"]["tem"] else "")
+                      + f"\n{a['url']}")
+    if len(linhas) == 1:
+        linhas.append("\nNenhum carro com margem positiva nas últimas 24 h.")
+    send("\n".join(linhas)[:4000])
+    with db:
+        db.execute("INSERT OR REPLACE INTO estado VALUES ('resumo_diario', ?)", (hoje,))
+    return True
 
 
 def avisar(db, config, mal, avisados):

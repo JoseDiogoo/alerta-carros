@@ -34,6 +34,7 @@ PADROES = {
     "facebook_cada_minutos": 3, "facebook_faixas": 3,
     "alerta_exploracao_minutos": 180, "feed_com_teto": [], "publicar_cada_minutos": 2,
     "alarmes_telegram": True, "alarme_sem_novos_minutos": 180, "margem_minima_telegram": 800,
+    "resumo_diario": True, "resumo_hora": 8,
 }
 
 
